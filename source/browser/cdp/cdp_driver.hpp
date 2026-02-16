@@ -25,6 +25,7 @@ using json = nlohmann::json;
 // State of the CDP connection.
 struct ConnectionState {
     bool connected = false;
+    bool connection_failed = false;
     bool shutting_down = false;
     struct lws_context *websocket_context = nullptr;
     struct lws *websocket_connection = nullptr;
@@ -80,6 +81,15 @@ browser_driver::TabListResult list_tabs();
 
 // Navigate the current tab to the given URL.
 browser_driver::NavigateResult navigate(const std::string &url);
+
+// Create a new tab (optionally with URL) and attach to it as the current target.
+browser_driver::DriverResult new_tab(const std::string &url = "about:blank");
+
+// Switch to tab by 0-based index (page targets only). Returns success and attaches to that tab.
+browser_driver::DriverResult switch_tab(int index);
+
+// Close the current tab. If other page targets exist, attaches to the first one.
+browser_driver::DriverResult close_tab();
 
 // Get the connection state (for introspection / testing).
 ConnectionState &get_state();

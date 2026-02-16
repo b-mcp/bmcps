@@ -11,6 +11,7 @@
 
 #include "tool_handlers/tool_handlers.hpp"
 #include "browser/cdp/cdp_driver.hpp"
+#include "utils/debug_log.hpp"
 
 using json = nlohmann::json;
 
@@ -34,11 +35,11 @@ static void signal_handler(int signal_number) {
 }
 
 int main() {
-    // Set up signal handlers for graceful shutdown.
+    std::cerr << "[bmcps] bmcps – Browser MCP Server, build " << __DATE__ << " " << __TIME__ << std::endl;
+
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // Initialize subsystems.
     cdp_driver::initialize();
     tool_handlers::register_all_tools();
 
@@ -50,6 +51,7 @@ int main() {
 
         if (raw_message.empty()) {
             // EOF on stdin means the client disconnected.
+            debug_log::log("EOF on stdin. Shutting down, will disconnect and kill browser.");
             mcp_stdio::log_message("EOF on stdin. Shutting down.");
             break;
         }
@@ -82,7 +84,7 @@ int main() {
         mcp_stdio::write_message(response.dump());
     }
 
-    // Cleanup: disconnect from browser if connected.
+    debug_log::log("Calling disconnect() (cleanup), browser process will be killed if connected.");
     cdp_driver::disconnect();
     mcp_stdio::log_message("BMCP Server shut down.");
 

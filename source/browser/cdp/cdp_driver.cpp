@@ -1,6 +1,7 @@
 #include "browser/cdp/cdp_driver.hpp"
 #include "browser/cdp/cdp_chrome_launch.hpp"
 #include "platform/platform_abi.hpp"
+#include "utils/debug_log.hpp"
 
 #include <libwebsockets.h>
 #include <iostream>
@@ -37,7 +38,7 @@ static int websocket_callback(struct lws *websocket_instance, enum lws_callback_
     switch (reason) {
     case LWS_CALLBACK_CLIENT_ESTABLISHED:
         global_state.connected = true;
-        std::cerr << "[bmcps] CDP WebSocket connected." << std::endl;
+        debug_log::log("CDP WebSocket connected.");
         break;
 
     case LWS_CALLBACK_CLIENT_RECEIVE: {
@@ -77,7 +78,9 @@ static int websocket_callback(struct lws *websocket_instance, enum lws_callback_
     case LWS_CALLBACK_CLIENT_CONNECTION_ERROR: {
         const char *error_message = incoming_data ? static_cast<const char *>(incoming_data) : "unknown";
         std::cerr << "[bmcps] CDP WebSocket connection error: " << error_message << std::endl;
+        debug_log::log("CDP WebSocket connection error (LWS): " + std::string(error_message));
         global_state.connected = false;
+        global_state.connection_failed = true;
         break;
     }
 
@@ -119,8 +122,9 @@ void initialize() {
 }
 
 bool connect(const std::string &websocket_url) {
-    // Parse the URL into host, port, path.
-    // Expected format: ws://127.0.0.1:PORT/path
+    std::cerr << "[bmcps] Connecting to CDP WebSocket: " << websocket_url << std::endl;
+    debug_log::log("connect() URL=" + websocket_url);
+
     std::string url_without_scheme = websocket_url;
     if (url_without_scheme.substr(0, 5) == "ws://") {
         url_without_scheme = url_without_scheme.substr(5);
@@ -173,27 +177,38 @@ bool connect(const std::string &websocket_url) {
     connect_info.port = port;
     connect_info.path = path.c_str();
     connect_info.host = host.c_str();
-    connect_info.origin = host.c_str();
-    connect_info.protocol = websocket_protocols[0].name;
+    connect_info.origin = nullptr;
+    connect_info.protocol = nullptr;
 
+    debug_log::log("connect() host=" + host + " port=" + std::to_string(port) + " path=" + path + " (no subprotocol)");
+    global_state.connection_failed = false;
     global_state.websocket_connection = lws_client_connect_via_info(&connect_info);
     if (global_state.websocket_connection == nullptr) {
-        std::cerr << "[bmcps] Failed to initiate CDP WebSocket connection." << std::endl;
+        std::cerr << "[bmcps] Failed to initiate CDP WebSocket connection (lws_client_connect_via_info returned null)." << std::endl;
+        debug_log::log("connect(): lws_client_connect_via_info returned null.");
         lws_context_destroy(global_state.websocket_context);
         global_state.websocket_context = nullptr;
         return false;
     }
 
-    // Service the event loop until connected or failed (with timeout).
     auto start_time = std::chrono::steady_clock::now();
-    int connection_timeout_milliseconds = 10000;
+    int connection_timeout_milliseconds = 20000;
 
     while (!global_state.connected) {
         lws_service(global_state.websocket_context, 50);
 
+        if (global_state.connection_failed) {
+            std::cerr << "[bmcps] CDP WebSocket connection failed (see error above)." << std::endl;
+            debug_log::log("connect(): connection_failed was set by LWS callback.");
+            lws_context_destroy(global_state.websocket_context);
+            global_state.websocket_context = nullptr;
+            return false;
+        }
+
         auto elapsed = std::chrono::steady_clock::now() - start_time;
         if (std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() > connection_timeout_milliseconds) {
-            std::cerr << "[bmcps] Timed out connecting to CDP WebSocket." << std::endl;
+            std::cerr << "[bmcps] Timed out connecting to CDP WebSocket (after " << (connection_timeout_milliseconds / 1000) << " s)." << std::endl;
+            debug_log::log("connect(): timed out after " + std::to_string(connection_timeout_milliseconds) + " ms.");
             lws_context_destroy(global_state.websocket_context);
             global_state.websocket_context = nullptr;
             return false;
@@ -204,20 +219,22 @@ bool connect(const std::string &websocket_url) {
 }
 
 void disconnect() {
+    debug_log::log("disconnect() called. shutting_down=true, will destroy WebSocket and kill Chrome if we launched it.");
     global_state.shutting_down = true;
 
     if (global_state.websocket_context != nullptr) {
         lws_context_destroy(global_state.websocket_context);
         global_state.websocket_context = nullptr;
+        debug_log::log("disconnect(): WebSocket context destroyed.");
     }
 
-    // Kill Chrome if we launched it.
     if (global_state.chrome_process_id > 0) {
+        debug_log::log("disconnect(): Killing Chrome process id=" + std::to_string(global_state.chrome_process_id));
         platform::kill_process(global_state.chrome_process_id);
-        global_state.chrome_process_id = -1;
     }
-
+    global_state.chrome_process_id = -1;
     global_state.connected = false;
+    debug_log::log("disconnect() finished.");
 }
 
 void service_websocket(int timeout_milliseconds) {
@@ -299,29 +316,47 @@ json send_command(const std::string &method, const json &params,
 
 browser_driver::DriverResult open_browser() {
     browser_driver::DriverResult result;
+    bool connected = false;
 
-    // Launch Chrome.
-    cdp_chrome_launch::ChromeLaunchResult launch_result = cdp_chrome_launch::launch_chrome();
-    if (!launch_result.success) {
-        result.success = false;
-        result.error_detail = launch_result.error_message;
-        result.message = "Failed to launch Chrome.";
-        return result;
+    std::string existing_url = cdp_chrome_launch::try_get_existing_websocket_url(cdp_chrome_launch::BMCPS_FIXED_USER_DATA_DIR);
+    if (!existing_url.empty()) {
+        debug_log::log("open_browser: Found existing Chrome, trying to connect to " + existing_url);
+        connected = connect(existing_url);
+        if (connected) {
+            global_state.chrome_process_id = -1;
+            global_state.user_data_directory = cdp_chrome_launch::BMCPS_FIXED_USER_DATA_DIR;
+        } else {
+            debug_log::log("open_browser: Connect to existing Chrome failed, will launch new one.");
+        }
     }
 
-    global_state.chrome_process_id = launch_result.process_id;
-    global_state.user_data_directory = launch_result.user_data_directory;
-
-    // Connect to the CDP WebSocket.
-    bool connected = connect(launch_result.websocket_debugger_url);
     if (!connected) {
-        result.success = false;
-        result.error_detail = "Could not establish WebSocket connection to: " + launch_result.websocket_debugger_url;
-        result.message = "Failed to connect to Chrome CDP.";
-        platform::kill_process(global_state.chrome_process_id);
-        return result;
+        cdp_chrome_launch::ChromeLaunchResult launch_result = cdp_chrome_launch::launch_chrome();
+        if (!launch_result.success) {
+            result.success = false;
+            result.error_detail = launch_result.error_message;
+            result.message = "Failed to launch Chrome.";
+            return result;
+        }
+        global_state.chrome_process_id = launch_result.process_id;
+        global_state.user_data_directory = launch_result.user_data_directory;
+
+        debug_log::log("Connecting to CDP WebSocket…");
+        connected = connect(launch_result.websocket_debugger_url);
+        if (!connected) {
+            debug_log::log("open_browser: WebSocket connect failed, killing Chrome pid=" + std::to_string(global_state.chrome_process_id));
+            result.success = false;
+            result.error_detail = "Could not establish WebSocket connection to: " + launch_result.websocket_debugger_url;
+            result.message = "Failed to connect to Chrome CDP.";
+            platform::kill_process(global_state.chrome_process_id);
+            global_state.chrome_process_id = -1;
+            return result;
+        }
     }
 
+    debug_log::log("open_browser: WebSocket connected successfully.");
+
+    debug_log::log("Discovering targets…");
     // Enable target discovery.
     json discover_params;
     discover_params["discover"] = true;
@@ -331,21 +366,28 @@ browser_driver::DriverResult open_browser() {
                   << discover_response.dump() << std::endl;
     }
 
-    // Get all available targets.
     json get_targets_response = send_command("Target.getTargets", json::object());
+    int target_count = 0;
+    if (get_targets_response.contains("result") && get_targets_response["result"].contains("targetInfos")) {
+        target_count = static_cast<int>(get_targets_response["result"]["targetInfos"].size());
+    }
+    debug_log::log("open_browser: Target.getTargets returned, target count=" + std::to_string(target_count));
 
     std::string chosen_target_id;
 
     if (get_targets_response.contains("result") &&
         get_targets_response["result"].contains("targetInfos")) {
         const auto &target_infos = get_targets_response["result"]["targetInfos"];
-        // Find the first "page" type target.
         for (const auto &target_info : target_infos) {
             if (target_info.contains("type") && target_info["type"] == "page") {
                 chosen_target_id = target_info["targetId"].get<std::string>();
                 break;
             }
         }
+    }
+
+    if (chosen_target_id.empty()) {
+        debug_log::log("open_browser: No page target found, creating new target (Target.createTarget).");
     }
 
     // If no page target exists, create a new one.
@@ -357,14 +399,19 @@ browser_driver::DriverResult open_browser() {
         if (create_response.contains("result") &&
             create_response["result"].contains("targetId")) {
             chosen_target_id = create_response["result"]["targetId"].get<std::string>();
+            debug_log::log("open_browser: Target.createTarget ok, targetId=" + chosen_target_id);
         } else {
+            debug_log::log("open_browser: Target.createTarget failed: " + create_response.dump());
             result.success = false;
             result.error_detail = "Target.createTarget failed: " + create_response.dump();
             result.message = "Failed to create a new tab.";
             return result;
         }
+    } else {
+        debug_log::log("open_browser: Using existing page targetId=" + chosen_target_id);
     }
 
+    debug_log::log("open_browser: Attaching to target (Target.attachToTarget) targetId=" + chosen_target_id);
     // Attach to the chosen target to get a session ID.
     json attach_params;
     attach_params["targetId"] = chosen_target_id;
@@ -375,7 +422,9 @@ browser_driver::DriverResult open_browser() {
         attach_response["result"].contains("sessionId")) {
         global_state.current_target_id = chosen_target_id;
         global_state.current_session_id = attach_response["result"]["sessionId"].get<std::string>();
+        debug_log::log("open_browser: Target.attachToTarget ok, sessionId=" + global_state.current_session_id);
     } else {
+        debug_log::log("open_browser: Target.attachToTarget failed: " + attach_response.dump());
         result.success = false;
         result.error_detail = "Target.attachToTarget failed: " + attach_response.dump();
         result.message = "Failed to attach to the browser tab.";
@@ -384,8 +433,7 @@ browser_driver::DriverResult open_browser() {
 
     result.success = true;
     result.message = "Browser opened and connected to default tab.";
-    std::cerr << "[bmcps] Attached to target=" << global_state.current_target_id
-              << " session=" << global_state.current_session_id << std::endl;
+    debug_log::log("Attached to target id=" + global_state.current_target_id + " session=" + global_state.current_session_id);
     return result;
 }
 
@@ -464,6 +512,161 @@ browser_driver::NavigateResult navigate(const std::string &url) {
     }
 
     result.success = true;
+    return result;
+}
+
+browser_driver::DriverResult new_tab(const std::string &url) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected) {
+        result.success = false;
+        result.error_detail = "Not connected to a browser. Call open_browser first.";
+        result.message = "Failed to create new tab.";
+        return result;
+    }
+
+    json create_params;
+    create_params["url"] = url.empty() ? "about:blank" : url;
+    json create_response = send_command("Target.createTarget", create_params);
+
+    if (!create_response.contains("result") || !create_response["result"].contains("targetId")) {
+        result.success = false;
+        result.error_detail = "Target.createTarget failed: " + create_response.dump();
+        result.message = "Failed to create new tab.";
+        return result;
+    }
+
+    std::string target_id = create_response["result"]["targetId"].get<std::string>();
+    debug_log::log("new_tab: created targetId=" + target_id);
+
+    json attach_params;
+    attach_params["targetId"] = target_id;
+    attach_params["flatten"] = true;
+    json attach_response = send_command("Target.attachToTarget", attach_params);
+
+    if (!attach_response.contains("result") || !attach_response["result"].contains("sessionId")) {
+        result.success = false;
+        result.error_detail = "Target.attachToTarget failed: " + attach_response.dump();
+        result.message = "Failed to attach to new tab.";
+        return result;
+    }
+
+    global_state.current_target_id = target_id;
+    global_state.current_session_id = attach_response["result"]["sessionId"].get<std::string>();
+    result.success = true;
+    result.message = "New tab opened and attached.";
+    debug_log::log("new_tab: attached sessionId=" + global_state.current_session_id);
+    return result;
+}
+
+browser_driver::DriverResult switch_tab(int index) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected) {
+        result.success = false;
+        result.error_detail = "Not connected to a browser. Call open_browser first.";
+        result.message = "Failed to switch tab.";
+        return result;
+    }
+
+    json get_targets_response = send_command("Target.getTargets", json::object());
+    if (!get_targets_response.contains("result") || !get_targets_response["result"].contains("targetInfos")) {
+        result.success = false;
+        result.error_detail = "Target.getTargets failed: " + get_targets_response.dump();
+        result.message = "Failed to switch tab.";
+        return result;
+    }
+
+    std::vector<std::string> page_target_ids;
+    for (const auto &target_info : get_targets_response["result"]["targetInfos"]) {
+        if (target_info.contains("type") && target_info["type"] == "page") {
+            page_target_ids.push_back(target_info["targetId"].get<std::string>());
+        }
+    }
+
+    if (index < 0 || index >= static_cast<int>(page_target_ids.size())) {
+        result.success = false;
+        result.error_detail = "Tab index " + std::to_string(index) + " out of range (0.." + std::to_string(page_target_ids.size() - 1) + ").";
+        result.message = "Failed to switch tab.";
+        return result;
+    }
+
+    std::string target_id = page_target_ids[static_cast<size_t>(index)];
+    json attach_params;
+    attach_params["targetId"] = target_id;
+    attach_params["flatten"] = true;
+    json attach_response = send_command("Target.attachToTarget", attach_params);
+
+    if (!attach_response.contains("result") || !attach_response["result"].contains("sessionId")) {
+        result.success = false;
+        result.error_detail = "Target.attachToTarget failed: " + attach_response.dump();
+        result.message = "Failed to switch tab.";
+        return result;
+    }
+
+    global_state.current_target_id = target_id;
+    global_state.current_session_id = attach_response["result"]["sessionId"].get<std::string>();
+
+    json activate_params;
+    activate_params["targetId"] = target_id;
+    json activate_response = send_command("Target.activateTarget", activate_params, "");
+    if (activate_response.contains("error") && activate_response["error"].is_string()) {
+        debug_log::log("switch_tab: Target.activateTarget failed: " + activate_response["error"].get<std::string>());
+    }
+
+    result.success = true;
+    result.message = "Switched to tab " + std::to_string(index) + ".";
+    debug_log::log("switch_tab: attached and activated targetId=" + target_id);
+    return result;
+}
+
+browser_driver::DriverResult close_tab() {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_target_id.empty()) {
+        result.success = false;
+        result.error_detail = "No current tab. Call open_browser and ensure a tab is selected.";
+        result.message = "Failed to close tab.";
+        return result;
+    }
+
+    std::string tab_to_close = global_state.current_target_id;
+    json close_params;
+    close_params["targetId"] = tab_to_close;
+    json close_response = send_command("Target.closeTarget", close_params);
+
+    if (close_response.contains("error") && close_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = close_response["error"].get<std::string>();
+        result.message = "Failed to close tab.";
+        return result;
+    }
+
+    global_state.current_target_id.clear();
+    global_state.current_session_id.clear();
+
+    json get_targets_response = send_command("Target.getTargets", json::object());
+    if (get_targets_response.contains("result") && get_targets_response["result"].contains("targetInfos")) {
+        for (const auto &target_info : get_targets_response["result"]["targetInfos"]) {
+            if (target_info.contains("type") && target_info["type"] == "page" &&
+                target_info["targetId"] != tab_to_close) {
+                std::string other_id = target_info["targetId"].get<std::string>();
+                json attach_params;
+                attach_params["targetId"] = other_id;
+                attach_params["flatten"] = true;
+                json attach_response = send_command("Target.attachToTarget", attach_params);
+                if (attach_response.contains("result") && attach_response["result"].contains("sessionId")) {
+                    global_state.current_target_id = other_id;
+                    global_state.current_session_id = attach_response["result"]["sessionId"].get<std::string>();
+                    debug_log::log("close_tab: attached to remaining tab targetId=" + other_id);
+                }
+                break;
+            }
+        }
+    }
+
+    result.success = true;
+    result.message = "Tab closed.";
     return result;
 }
 

@@ -26,6 +26,7 @@ pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
 
 set(BMCPS_SOURCES
     source/main.cpp
+    source/utils/debug_log.cpp
     source/mcp/mcp_stdio.cpp
     source/mcp/mcp_dispatch.cpp
     source/mcp/mcp_tools.cpp
@@ -35,7 +36,11 @@ set(BMCPS_SOURCES
     source/platform/linux/platform_linux.cpp
     source/tool_handlers/tool_handlers.cpp
     source/tool_handlers/tool_open_browser.cpp
+    source/tool_handlers/tool_close_browser.cpp
     source/tool_handlers/tool_list_tabs.cpp
+    source/tool_handlers/tool_new_tab.cpp
+    source/tool_handlers/tool_switch_tab.cpp
+    source/tool_handlers/tool_close_tab.cpp
     source/tool_handlers/tool_navigate.cpp
 )
 

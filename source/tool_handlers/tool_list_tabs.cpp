@@ -1,6 +1,7 @@
 #include "tool_handlers/tool_handlers.hpp"
 #include "mcp/mcp_tools.hpp"
 #include "browser/cdp/cdp_driver.hpp"
+#include "utils/debug_log.hpp"
 
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -13,6 +14,7 @@ using json = nlohmann::json;
 static json handle_list_tabs(const json &arguments) {
     (void)arguments;
 
+    debug_log::log("list_tabs invoked");
     browser_driver::TabListResult tab_list_result = cdp_driver::list_tabs();
 
     json result;
@@ -52,6 +54,7 @@ static json handle_list_tabs(const json &arguments) {
     text_content["type"] = "text";
     text_content["text"] = summary_stream.str();
 
+    debug_log::log("Listing tabs… found " + std::to_string(tab_list_result.tabs.size()) + " tab(s).");
     result["content"] = json::array({text_content});
     result["isError"] = false;
     return result;

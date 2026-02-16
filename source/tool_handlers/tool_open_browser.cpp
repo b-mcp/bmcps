@@ -1,6 +1,7 @@
 #include "tool_handlers/tool_handlers.hpp"
 #include "mcp/mcp_tools.hpp"
 #include "browser/cdp/cdp_driver.hpp"
+#include "utils/debug_log.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -14,6 +15,7 @@ using json = nlohmann::json;
 static json handle_open_browser(const json &arguments) {
     (void)arguments; // No required parameters for now.
 
+    debug_log::log("open_browser invoked");
     browser_driver::DriverResult driver_result = cdp_driver::open_browser();
 
     json text_content;

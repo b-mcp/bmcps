@@ -12,6 +12,7 @@ add_executable(bmcps_test ${TEST_SOURCES}
     ${CMAKE_CURRENT_SOURCE_DIR}/../source/browser/cdp/cdp_chrome_launch.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../source/platform/linux/platform_linux.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../source/protocol/json_rpc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../source/utils/debug_log.cpp
 )
 
 target_include_directories(bmcps_test PRIVATE
@@ -36,6 +37,7 @@ add_executable(bmcps_smoke_test
     ${CMAKE_CURRENT_SOURCE_DIR}/../source/browser/cdp/cdp_driver.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../source/platform/linux/platform_linux.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../source/protocol/json_rpc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../source/utils/debug_log.cpp
 )
 
 target_include_directories(bmcps_smoke_test PRIVATE

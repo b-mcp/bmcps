@@ -18,18 +18,23 @@ struct ChromeLaunchResult {
     std::string error_message;
 };
 
-// Launch Chrome with remote debugging enabled.
-// Creates a temporary user-data-dir, starts Chrome with --remote-debugging-port=0,
-// waits for DevToolsActivePort file, and builds the WebSocket URL.
+// Fixed port and profile so we always use the same Chrome instance.
+static constexpr int BMCPS_FIXED_DEBUG_PORT = 9222;
+static const char BMCPS_FIXED_USER_DATA_DIR[] = "/tmp/bmcps_chrome_profile";
+
+// If Chrome is already running (DevToolsActivePort exists in profile dir),
+// returns its WebSocket URL. Otherwise returns empty string.
+std::string try_get_existing_websocket_url(const std::string &user_data_directory);
+
+// Launch Chrome with remote debugging on the fixed port and user-data-dir.
 ChromeLaunchResult launch_chrome();
 
 // Build the command-line arguments for launching Chrome.
-// Exposed separately for testability (argv check without actually spawning).
 struct ChromeCommandLine {
     std::string executable_path;
     std::vector<std::string> arguments;
 };
-ChromeCommandLine build_chrome_command_line(const std::string &user_data_directory);
+ChromeCommandLine build_chrome_command_line(const std::string &user_data_directory, int port = BMCPS_FIXED_DEBUG_PORT);
 
 // Find the Chrome executable on the system (platform-specific search).
 std::string find_chrome_executable();

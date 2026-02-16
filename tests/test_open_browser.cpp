@@ -97,7 +97,7 @@ static bool test_parse_devtools_active_port() {
     return success;
 }
 
-// Test: WebSocket URL building.
+// Test: WebSocket URL building (path already with single leading slash).
 static bool test_build_websocket_url() {
     std::string url = cdp_chrome_launch::build_websocket_url(9333, "/devtools/browser/abc-123");
     bool success = (url == "ws://127.0.0.1:9333/devtools/browser/abc-123");
@@ -110,6 +110,25 @@ static bool test_build_websocket_url() {
     return success;
 }
 
+// Test: WebSocket URL when path has multiple leading slashes (normalized to single).
+static bool test_build_websocket_url_path_with_leading_slash() {
+    std::string url = cdp_chrome_launch::build_websocket_url(9333, "/devtools/browser/xyz");
+    bool success = (url == "ws://127.0.0.1:9333/devtools/browser/xyz");
+
+    if (!success) {
+        std::cout << "  FAIL: WebSocket URL with single slash path was: " << url << std::endl;
+        return false;
+    }
+    url = cdp_chrome_launch::build_websocket_url(9333, "//devtools/browser/xyz");
+    success = (url == "ws://127.0.0.1:9333/devtools/browser/xyz");
+    if (success) {
+        std::cout << "  OK: WebSocket URL with double slash path normalized to single: " << url << std::endl;
+    } else {
+        std::cout << "  FAIL: WebSocket URL with // path was: " << url << std::endl;
+    }
+    return success;
+}
+
 bool run_all_tests() {
     bool all_passed = true;
     all_passed &= test_command_line_has_remote_debugging_port();
@@ -118,6 +137,7 @@ bool run_all_tests() {
     all_passed &= test_chrome_executable_found();
     all_passed &= test_parse_devtools_active_port();
     all_passed &= test_build_websocket_url();
+    all_passed &= test_build_websocket_url_path_with_leading_slash();
     return all_passed;
 }
 

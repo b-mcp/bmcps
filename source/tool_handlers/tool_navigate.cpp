@@ -1,6 +1,7 @@
 #include "tool_handlers/tool_handlers.hpp"
 #include "mcp/mcp_tools.hpp"
 #include "browser/cdp/cdp_driver.hpp"
+#include "utils/debug_log.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -24,6 +25,8 @@ static json handle_navigate(const json &arguments) {
 
     std::string url = arguments["url"].get<std::string>();
 
+    debug_log::log("navigate invoked");
+    debug_log::log("Navigating to URL: " + url);
     browser_driver::NavigateResult navigate_result = cdp_driver::navigate(url);
 
     json text_content;

@@ -35,7 +35,9 @@ cd build && cmake --build . --target bmcps_smoke_test && ./tests/bmcps_smoke_tes
 
 ## Use with Cursor
 
-Add to your MCP configuration (e.g. `.cursor/mcp.json`):
+**Permanent enable:** The project includes a `.cursor/mcp.json`, so the bmcps MCP server is loaded automatically when you open this project. For a global setup, use `~/.cursor/mcp.json` (Cursor loads it on startup).
+
+Add to your MCP configuration (e.g. `.cursor/mcp.json` or `~/.cursor/mcp.json`):
 
 ```json
 {
@@ -47,10 +49,14 @@ Add to your MCP configuration (e.g. `.cursor/mcp.json`):
 }
 ```
 
-Restart Cursor. The following tools become available in chat:
+Restart Cursor (or reload the window). The following tools become available in chat:
 
 - **open_browser** – launch Chrome and connect via CDP
+- **close_browser** – close the browser and disconnect (terminates the Chrome process)
 - **list_tabs** – list open browser tabs
+- **new_tab** – open a new tab (optional URL); it becomes the current target for navigate
+- **switch_tab** – switch to tab by 0-based index (use list_tabs to see order)
+- **close_tab** – close the current tab; attaches to another tab if one exists
 - **navigate** – navigate the current tab to a URL
 
 ## Project structure

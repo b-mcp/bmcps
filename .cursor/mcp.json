@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "bmcps": {
+      "command": "/home/roka/work/bmcps/build/bmcps",
+      "env": {}
+    }
+  }
+}
