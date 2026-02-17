@@ -58,6 +58,7 @@ Restart Cursor (or reload the window). The following tools become available in c
 - **switch_tab** – switch to tab by 0-based index (use list_tabs to see order)
 - **close_tab** – close the current tab; attaches to another tab if one exists
 - **navigate** – navigate the current tab to a URL
+- **capture_screenshot** – capture a screenshot of the currently displayed tab; returns image content so the model can verify the visible UI (e.g. buttons, layout)
 
 ## Project structure
 

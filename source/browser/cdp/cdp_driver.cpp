@@ -670,6 +670,40 @@ browser_driver::DriverResult close_tab() {
     return result;
 }
 
+browser_driver::CaptureScreenshotResult capture_screenshot() {
+    browser_driver::CaptureScreenshotResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    json capture_params;
+    capture_params["format"] = "png";
+    json capture_response = send_command("Page.captureScreenshot", capture_params,
+                                         global_state.current_session_id);
+
+    if (capture_response.contains("error") && capture_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = capture_response["error"].get<std::string>();
+        return result;
+    }
+
+    if (capture_response.contains("result") && capture_response["result"].contains("data") &&
+        capture_response["result"]["data"].is_string()) {
+        result.success = true;
+        result.image_base64 = capture_response["result"]["data"].get<std::string>();
+        result.mime_type = "image/png";
+        debug_log::log("capture_screenshot: captured " + std::to_string(result.image_base64.size()) + " bytes base64");
+    } else {
+        result.success = false;
+        result.error_detail = "Page.captureScreenshot did not return image data.";
+    }
+
+    return result;
+}
+
 ConnectionState &get_state() {
     return global_state;
 }

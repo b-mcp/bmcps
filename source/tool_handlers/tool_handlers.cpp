@@ -8,6 +8,7 @@ namespace tool_new_tab { void register_tool(); }
 namespace tool_switch_tab { void register_tool(); }
 namespace tool_close_tab { void register_tool(); }
 namespace tool_navigate { void register_tool(); }
+namespace tool_capture_screenshot { void register_tool(); }
 
 namespace tool_handlers {
 
@@ -19,6 +20,7 @@ void register_all_tools() {
     tool_switch_tab::register_tool();
     tool_close_tab::register_tool();
     tool_navigate::register_tool();
+    tool_capture_screenshot::register_tool();
 }
 
 } // namespace tool_handlers

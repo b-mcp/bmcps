@@ -41,6 +41,14 @@ struct NavigateResult {
     std::string error_text; // CDP errorText if navigation failed
 };
 
+// Result of capturing a screenshot of the current tab.
+struct CaptureScreenshotResult {
+    bool success = false;
+    std::string image_base64;
+    std::string mime_type;   // e.g. "image/png"
+    std::string error_detail;
+};
+
 } // namespace browser_driver
 
 #endif // BMCPS_BROWSER_DRIVER_ABI_HPP

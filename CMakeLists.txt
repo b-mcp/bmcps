@@ -42,6 +42,7 @@ set(BMCPS_SOURCES
     source/tool_handlers/tool_switch_tab.cpp
     source/tool_handlers/tool_close_tab.cpp
     source/tool_handlers/tool_navigate.cpp
+    source/tool_handlers/tool_capture_screenshot.cpp
 )
 
 add_executable(bmcps ${BMCPS_SOURCES})

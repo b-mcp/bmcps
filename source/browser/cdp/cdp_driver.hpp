@@ -91,6 +91,9 @@ browser_driver::DriverResult switch_tab(int index);
 // Close the current tab. If other page targets exist, attaches to the first one.
 browser_driver::DriverResult close_tab();
 
+// Capture a screenshot of the current tab. Returns base64 image data and mime type.
+browser_driver::CaptureScreenshotResult capture_screenshot();
+
 // Get the connection state (for introspection / testing).
 ConnectionState &get_state();
 
