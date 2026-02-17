@@ -8,6 +8,7 @@
 #include <cstring>
 #include <chrono>
 #include <thread>
+#include <algorithm>
 
 namespace cdp_driver {
 
@@ -456,7 +457,12 @@ browser_driver::TabListResult list_tabs() {
     }
 
     const auto &target_infos = get_targets_response["result"]["targetInfos"];
+    std::vector<browser_driver::TabInfo> page_tabs;
     for (const auto &target_info : target_infos) {
+        std::string type_str = target_info.contains("type") ? target_info["type"].get<std::string>() : "";
+        if (type_str != "page") {
+            continue;
+        }
         browser_driver::TabInfo tab;
         if (target_info.contains("targetId")) {
             tab.target_id = target_info["targetId"].get<std::string>();
@@ -467,11 +473,14 @@ browser_driver::TabListResult list_tabs() {
         if (target_info.contains("url")) {
             tab.url = target_info["url"].get<std::string>();
         }
-        if (target_info.contains("type")) {
-            tab.type = target_info["type"].get<std::string>();
-        }
-        result.tabs.push_back(tab);
+        tab.type = type_str;
+        page_tabs.push_back(tab);
     }
+    std::sort(page_tabs.begin(), page_tabs.end(),
+              [](const browser_driver::TabInfo &a, const browser_driver::TabInfo &b) {
+                  return a.target_id < b.target_id;
+              });
+    result.tabs = page_tabs;
 
     result.success = true;
     return result;
@@ -583,6 +592,7 @@ browser_driver::DriverResult switch_tab(int index) {
             page_target_ids.push_back(target_info["targetId"].get<std::string>());
         }
     }
+    std::sort(page_target_ids.begin(), page_target_ids.end());
 
     if (index < 0 || index >= static_cast<int>(page_target_ids.size())) {
         result.success = false;
