@@ -13,6 +13,7 @@ namespace tool_navigate_forward { void register_tool(); }
 namespace tool_refresh { void register_tool(); }
 namespace tool_get_navigation_history { void register_tool(); }
 namespace tool_capture_screenshot { void register_tool(); }
+namespace tool_get_console_messages { void register_tool(); }
 
 namespace tool_handlers {
 
@@ -29,6 +30,7 @@ void register_all_tools() {
     tool_refresh::register_tool();
     tool_get_navigation_history::register_tool();
     tool_capture_screenshot::register_tool();
+    tool_get_console_messages::register_tool();
 }
 
 } // namespace tool_handlers

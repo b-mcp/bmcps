@@ -51,7 +51,7 @@ Add to your MCP configuration (e.g. `.cursor/mcp.json` or `~/.cursor/mcp.json`):
 
 Restart Cursor (or reload the window). The following tools become available in chat:
 
-- **open_browser** – launch Chrome and connect via CDP; optional **disable_translate** (boolean, default false) to hide the „Would you like to translate?“ bar
+- **open_browser** – launch Chrome and connect via CDP; **disable_translate** (boolean, default true) – translate bar is hidden by default; set to false to show it
 - **close_browser** – close the browser and disconnect (terminates the Chrome process)
 - **list_tabs** – list open browser tabs
 - **new_tab** – open a new tab (optional URL); it becomes the current target for navigate
@@ -63,6 +63,7 @@ Restart Cursor (or reload the window). The following tools become available in c
 - **refresh** – reload the current tab
 - **get_navigation_history** – get the current tab’s navigation history (URLs and current index; via CDP, not available from in-page JS)
 - **capture_screenshot** – capture a screenshot of the currently displayed tab; returns image content so the model can verify the visible UI (e.g. buttons, layout)
+- **get_console_messages** – get console messages (console.log, console.error, etc.) from the current tab. Parameters: **time_scope** (object with type: `none` | `last_duration` | `range` | `from_onwards` | `until`; for last_duration use value+unit; for range use from_ms+to_ms; for from_onwards use from_ms; for until use to_ms), **count_scope** (max_entries, default 500; order: newest_first | oldest_first), **level_scope** (type: min_level with level, or only with levels array). Response first line: `[bmcps-console] returned=N total_matching=M truncated=true|false`, then time_sync (browser/server time, offset, round-trip), then log lines. Console text is UTF-8 sanitized; buffer is limited (FIFO) to avoid unbounded memory use.
 
 ## Project structure
 

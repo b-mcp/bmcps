@@ -48,6 +48,11 @@ struct ConnectionState {
 
     // Buffer for incoming WebSocket data.
     std::string receive_buffer;
+
+    // Console messages buffer (Runtime.consoleAPICalled for current tab).
+    std::vector<browser_driver::ConsoleEntry> console_entries;
+    std::mutex console_mutex;
+    static constexpr size_t kConsoleEntriesMax = 20000;
 };
 
 // Initialize the CDP driver (set up global state). Call once at startup.
@@ -105,6 +110,13 @@ browser_driver::DriverResult close_tab();
 
 // Capture a screenshot of the current tab. Returns base64 image data and mime type.
 browser_driver::CaptureScreenshotResult capture_screenshot();
+
+// Enable Runtime for the current session and clear console buffer. Call after attach.
+void enable_console_for_session();
+
+// Get console messages with time/level/count scope. Includes time_sync when possible.
+browser_driver::ConsoleMessagesResult get_console_messages(
+    const browser_driver::GetConsoleMessagesOptions &options);
 
 // Get the connection state (for introspection / testing).
 ConnectionState &get_state();

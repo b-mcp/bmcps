@@ -52,7 +52,7 @@ void register_tool() {
     input_schema["properties"] = json::object();
     input_schema["properties"]["disable_translate"] = {
         {"type", "boolean"},
-        {"description", "If true, Chrome will not show the \"Would you like to translate this page?\" bar. Default false so the bar can appear (e.g. for testing)."}
+        {"description", "If true, Chrome will not show the \"Would you like to translate this page?\" bar. Default true (bar hidden). Set to false to show the translate bar."}
     };
     input_schema["required"] = json::array();
 

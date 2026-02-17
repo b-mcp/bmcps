@@ -27,6 +27,7 @@ pkg_check_modules(LIBWEBSOCKETS REQUIRED libwebsockets)
 set(BMCPS_SOURCES
     source/main.cpp
     source/utils/debug_log.cpp
+    source/utils/utf8_sanitize.cpp
     source/mcp/mcp_stdio.cpp
     source/mcp/mcp_dispatch.cpp
     source/mcp/mcp_tools.cpp
@@ -47,6 +48,7 @@ set(BMCPS_SOURCES
     source/tool_handlers/tool_refresh.cpp
     source/tool_handlers/tool_get_navigation_history.cpp
     source/tool_handlers/tool_capture_screenshot.cpp
+    source/tool_handlers/tool_get_console_messages.cpp
 )
 
 add_executable(bmcps ${BMCPS_SOURCES})

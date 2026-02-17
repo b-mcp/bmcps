@@ -2,6 +2,7 @@
 #include "browser/cdp/cdp_chrome_launch.hpp"
 #include "platform/platform_abi.hpp"
 #include "utils/debug_log.hpp"
+#include "utils/utf8_sanitize.hpp"
 
 #include <libwebsockets.h>
 #include <iostream>
@@ -61,10 +62,62 @@ static int websocket_callback(struct lws *websocket_instance, enum lws_callback_
                     global_state.pending_responses[message_id] = message;
                     global_state.pending_condition.notify_all();
                 } else {
-                    // CDP event (method without id). Log for now; can be extended later
-                    // with an event handler registry.
+                    // CDP event (method without id).
                     if (message.contains("method")) {
-                        std::cerr << "[bmcps] CDP event: " << message["method"].get<std::string>() << std::endl;
+                        std::string method = message["method"].get<std::string>();
+                        if (method == "Runtime.consoleAPICalled") {
+                            std::string event_session_id;
+                            if (message.contains("sessionId") && message["sessionId"].is_string()) {
+                                event_session_id = message["sessionId"].get<std::string>();
+                            }
+                            if ((event_session_id.empty() || event_session_id == global_state.current_session_id) &&
+                                message.contains("params")) {
+                                const json &params = message["params"];
+                                std::string level = "info";
+                                if (params.contains("type") && params["type"].is_string()) {
+                                    level = params["type"].get<std::string>();
+                                }
+                                std::string text_parts;
+                                if (params.contains("args") && params["args"].is_array()) {
+                                    for (const auto &arg : params["args"]) {
+                                        std::string piece;
+                                        if (arg.contains("value")) {
+                                            const auto &value = arg["value"];
+                                            if (value.is_string()) {
+                                                piece = value.get<std::string>();
+                                            } else if (!value.is_null()) {
+                                                piece = value.dump();
+                                            }
+                                        } else if (arg.contains("description") && arg["description"].is_string()) {
+                                            piece = arg["description"].get<std::string>();
+                                        }
+                                        if (!piece.empty()) {
+                                            if (!text_parts.empty()) {
+                                                text_parts += " ";
+                                            }
+                                            text_parts += piece;
+                                        }
+                                    }
+                                }
+                                utf8_sanitize::sanitize(text_parts);
+                                int64_t timestamp_ms = static_cast<int64_t>(
+                                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        std::chrono::system_clock::now().time_since_epoch()).count());
+                                browser_driver::ConsoleEntry entry;
+                                entry.timestamp_ms = timestamp_ms;
+                                entry.level = level;
+                                entry.text = std::move(text_parts);
+                                {
+                                    std::lock_guard<std::mutex> lock(global_state.console_mutex);
+                                    global_state.console_entries.push_back(std::move(entry));
+                                    while (global_state.console_entries.size() > ConnectionState::kConsoleEntriesMax) {
+                                        global_state.console_entries.erase(global_state.console_entries.begin());
+                                    }
+                                }
+                            }
+                        } else {
+                            std::cerr << "[bmcps] CDP event: " << method << std::endl;
+                        }
                     }
                 }
             } catch (const json::parse_error &parse_error) {
@@ -319,16 +372,20 @@ browser_driver::DriverResult open_browser(const browser_driver::OpenBrowserOptio
     browser_driver::DriverResult result;
     bool connected = false;
 
-    std::string existing_url = cdp_chrome_launch::try_get_existing_websocket_url(cdp_chrome_launch::BMCPS_FIXED_USER_DATA_DIR);
-    if (!existing_url.empty()) {
-        debug_log::log("open_browser: Found existing Chrome, trying to connect to " + existing_url);
-        connected = connect(existing_url);
-        if (connected) {
-            global_state.chrome_process_id = -1;
-            global_state.user_data_directory = cdp_chrome_launch::BMCPS_FIXED_USER_DATA_DIR;
-        } else {
-            debug_log::log("open_browser: Connect to existing Chrome failed, will launch new one.");
+    if (!options.disable_translate) {
+        std::string existing_url = cdp_chrome_launch::try_get_existing_websocket_url(cdp_chrome_launch::BMCPS_FIXED_USER_DATA_DIR);
+        if (!existing_url.empty()) {
+            debug_log::log("open_browser: Found existing Chrome, trying to connect to " + existing_url);
+            connected = connect(existing_url);
+            if (connected) {
+                global_state.chrome_process_id = -1;
+                global_state.user_data_directory = cdp_chrome_launch::BMCPS_FIXED_USER_DATA_DIR;
+            } else {
+                debug_log::log("open_browser: Connect to existing Chrome failed, will launch new one.");
+            }
         }
+    } else {
+        debug_log::log("open_browser: disable_translate=true, launching new Chrome so translate bar is off.");
     }
 
     if (!connected) {
@@ -432,6 +489,7 @@ browser_driver::DriverResult open_browser(const browser_driver::OpenBrowserOptio
         return result;
     }
 
+    enable_console_for_session();
     result.success = true;
     result.message = "Browser opened and connected to default tab.";
     debug_log::log("Attached to target id=" + global_state.current_target_id + " session=" + global_state.current_session_id);
@@ -521,6 +579,10 @@ browser_driver::NavigateResult navigate(const std::string &url) {
     }
 
     result.success = true;
+    if (result.success) {
+        std::lock_guard<std::mutex> lock(global_state.console_mutex);
+        global_state.console_entries.clear();
+    }
     return result;
 }
 
@@ -573,6 +635,10 @@ browser_driver::DriverResult navigate_back() {
 
     result.success = true;
     result.message = "Navigated back.";
+    {
+        std::lock_guard<std::mutex> lock(global_state.console_mutex);
+        global_state.console_entries.clear();
+    }
     return result;
 }
 
@@ -626,6 +692,10 @@ browser_driver::DriverResult navigate_forward() {
 
     result.success = true;
     result.message = "Navigated forward.";
+    {
+        std::lock_guard<std::mutex> lock(global_state.console_mutex);
+        global_state.console_entries.clear();
+    }
     return result;
 }
 
@@ -650,6 +720,10 @@ browser_driver::DriverResult refresh() {
 
     result.success = true;
     result.message = "Page reloaded.";
+    {
+        std::lock_guard<std::mutex> lock(global_state.console_mutex);
+        global_state.console_entries.clear();
+    }
     return result;
 }
 
@@ -733,6 +807,7 @@ browser_driver::DriverResult new_tab(const std::string &url) {
 
     global_state.current_target_id = target_id;
     global_state.current_session_id = attach_response["result"]["sessionId"].get<std::string>();
+    enable_console_for_session();
     result.success = true;
     result.message = "New tab opened and attached.";
     debug_log::log("new_tab: attached sessionId=" + global_state.current_session_id);
@@ -787,6 +862,7 @@ browser_driver::DriverResult switch_tab(int index) {
 
     global_state.current_target_id = target_id;
     global_state.current_session_id = attach_response["result"]["sessionId"].get<std::string>();
+    enable_console_for_session();
 
     json activate_params;
     activate_params["targetId"] = target_id;
@@ -839,6 +915,7 @@ browser_driver::DriverResult close_tab() {
                 if (attach_response.contains("result") && attach_response["result"].contains("sessionId")) {
                     global_state.current_target_id = other_id;
                     global_state.current_session_id = attach_response["result"]["sessionId"].get<std::string>();
+                    enable_console_for_session();
                     debug_log::log("close_tab: attached to remaining tab targetId=" + other_id);
                 }
                 break;
@@ -882,6 +959,168 @@ browser_driver::CaptureScreenshotResult capture_screenshot() {
         result.error_detail = "Page.captureScreenshot did not return image data.";
     }
 
+    return result;
+}
+
+void enable_console_for_session() {
+    {
+        std::lock_guard<std::mutex> lock(global_state.console_mutex);
+        global_state.console_entries.clear();
+    }
+    if (global_state.connected && !global_state.current_session_id.empty()) {
+        json enable_response = send_command("Runtime.enable", json::object(),
+                                            global_state.current_session_id);
+        if (enable_response.contains("error") && enable_response["error"].is_string()) {
+            debug_log::log("enable_console_for_session: Runtime.enable failed: " +
+                           enable_response["error"].get<std::string>());
+        }
+    }
+}
+
+namespace {
+
+int level_weight(const std::string &level) {
+    if (level == "debug") return 0;
+    if (level == "log") return 1;
+    if (level == "info") return 2;
+    if (level == "warning") return 3;
+    if (level == "error") return 4;
+    return 2;
+}
+
+bool level_passes_min(const std::string &entry_level, const std::string &min_level) {
+    return level_weight(entry_level) >= level_weight(min_level);
+}
+
+bool level_in_list(const std::string &entry_level, const std::vector<std::string> &levels) {
+    for (const auto &allowed : levels) {
+        if (entry_level == allowed) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+browser_driver::ConsoleMessagesResult get_console_messages(
+    const browser_driver::GetConsoleMessagesOptions &options) {
+
+    browser_driver::ConsoleMessagesResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    json eval_params;
+    eval_params["expression"] = "Date.now()";
+    auto time_before = std::chrono::steady_clock::now();
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 5000);
+    auto time_after = std::chrono::steady_clock::now();
+    result.time_sync.server_now_ms = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+    result.time_sync.round_trip_ms = static_cast<int64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(time_after - time_before).count());
+    if (eval_response.contains("result") && eval_response["result"].contains("result")) {
+        const auto &res = eval_response["result"]["result"];
+        if (res.contains("value") && res["value"].is_number()) {
+            result.time_sync.browser_now_ms = res["value"].get<int64_t>();
+            result.time_sync.offset_ms = result.time_sync.browser_now_ms - result.time_sync.server_now_ms;
+        }
+    }
+
+    for (int drain_round = 0; drain_round < 20; ++drain_round) {
+        service_websocket(50);
+    }
+
+    std::vector<browser_driver::ConsoleEntry> entries_copy;
+    {
+        std::lock_guard<std::mutex> lock(global_state.console_mutex);
+        entries_copy = global_state.console_entries;
+    }
+
+    std::vector<browser_driver::ConsoleEntry> filtered;
+
+    for (const auto &entry : entries_copy) {
+        if (options.level_scope.type == browser_driver::LevelScopeType::MinLevel) {
+            if (!level_passes_min(entry.level, options.level_scope.level)) {
+                continue;
+            }
+        } else {
+            if (options.level_scope.levels.empty() || !level_in_list(entry.level, options.level_scope.levels)) {
+                continue;
+            }
+        }
+
+        int64_t from_ms = 0;
+        int64_t to_ms = result.time_sync.server_now_ms + 86400000;
+
+        switch (options.time_scope.type) {
+        case browser_driver::TimeScopeType::None:
+            break;
+        case browser_driver::TimeScopeType::LastDuration: {
+            int64_t duration_ms = options.time_scope.last_duration_value;
+            const std::string &unit = options.time_scope.last_duration_unit;
+            if (unit == "seconds") {
+                duration_ms *= 1000;
+            } else if (unit == "minutes") {
+                duration_ms *= 60 * 1000;
+            }
+            from_ms = result.time_sync.server_now_ms - duration_ms;
+            to_ms = result.time_sync.server_now_ms;
+            break;
+        }
+        case browser_driver::TimeScopeType::Range:
+            from_ms = options.time_scope.from_ms;
+            to_ms = options.time_scope.to_ms;
+            break;
+        case browser_driver::TimeScopeType::FromOnwards:
+            from_ms = options.time_scope.from_ms;
+            to_ms = result.time_sync.server_now_ms + 86400000;
+            break;
+        case browser_driver::TimeScopeType::Until:
+            from_ms = 0;
+            to_ms = options.time_scope.to_ms;
+            break;
+        }
+
+        if (options.time_scope.type != browser_driver::TimeScopeType::None) {
+            if (entry.timestamp_ms < from_ms || entry.timestamp_ms > to_ms) {
+                continue;
+            }
+        }
+
+        filtered.push_back(entry);
+    }
+
+    bool order_newest_first = (options.count_scope.order != "oldest_first");
+    std::sort(filtered.begin(), filtered.end(),
+              [order_newest_first](const browser_driver::ConsoleEntry &a,
+                                  const browser_driver::ConsoleEntry &b) {
+                  if (order_newest_first) {
+                      return a.timestamp_ms > b.timestamp_ms;
+                  }
+                  return a.timestamp_ms < b.timestamp_ms;
+              });
+
+    result.total_matching = static_cast<int>(filtered.size());
+    int max_entries = options.count_scope.max_entries;
+    if (max_entries <= 0) {
+        max_entries = 500;
+    }
+    result.truncated = (result.total_matching > max_entries);
+    int take = std::min(result.total_matching, max_entries);
+
+    for (int index = 0; index < take; ++index) {
+        const auto &entry = filtered[static_cast<size_t>(index)];
+        result.lines.push_back("[" + entry.level + "] " + entry.text);
+    }
+    result.returned_count = static_cast<int>(result.lines.size());
+    result.success = true;
     return result;
 }
 
