@@ -51,13 +51,17 @@ Add to your MCP configuration (e.g. `.cursor/mcp.json` or `~/.cursor/mcp.json`):
 
 Restart Cursor (or reload the window). The following tools become available in chat:
 
-- **open_browser** – launch Chrome and connect via CDP
+- **open_browser** – launch Chrome and connect via CDP; optional **disable_translate** (boolean, default false) to hide the „Would you like to translate?“ bar
 - **close_browser** – close the browser and disconnect (terminates the Chrome process)
 - **list_tabs** – list open browser tabs
 - **new_tab** – open a new tab (optional URL); it becomes the current target for navigate
 - **switch_tab** – switch to tab by 0-based index (use list_tabs to see order)
 - **close_tab** – close the current tab; attaches to another tab if one exists
 - **navigate** – navigate the current tab to a URL
+- **navigate_back** – go back in the current tab’s history
+- **navigate_forward** – go forward in the current tab’s history
+- **refresh** – reload the current tab
+- **get_navigation_history** – get the current tab’s navigation history (URLs and current index; via CDP, not available from in-page JS)
 - **capture_screenshot** – capture a screenshot of the currently displayed tab; returns image content so the model can verify the visible UI (e.g. buttons, layout)
 
 ## Project structure

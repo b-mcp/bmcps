@@ -74,13 +74,25 @@ void service_websocket(int timeout_milliseconds);
 
 // Open the browser: launch Chrome, connect via CDP, discover targets,
 // attach to a default tab. Stores current_target_id and current_session_id.
-browser_driver::DriverResult open_browser();
+browser_driver::DriverResult open_browser(const browser_driver::OpenBrowserOptions &options = {});
 
 // List all page-type targets (tabs).
 browser_driver::TabListResult list_tabs();
 
 // Navigate the current tab to the given URL.
 browser_driver::NavigateResult navigate(const std::string &url);
+
+// Go back in the current tab's history.
+browser_driver::DriverResult navigate_back();
+
+// Go forward in the current tab's history.
+browser_driver::DriverResult navigate_forward();
+
+// Reload the current tab.
+browser_driver::DriverResult refresh();
+
+// Get the current tab's navigation history (entries and current index).
+browser_driver::NavigationHistoryResult get_navigation_history();
 
 // Create a new tab (optionally with URL) and attach to it as the current target.
 browser_driver::DriverResult new_tab(const std::string &url = "about:blank");

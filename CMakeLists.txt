@@ -42,6 +42,10 @@ set(BMCPS_SOURCES
     source/tool_handlers/tool_switch_tab.cpp
     source/tool_handlers/tool_close_tab.cpp
     source/tool_handlers/tool_navigate.cpp
+    source/tool_handlers/tool_navigate_back.cpp
+    source/tool_handlers/tool_navigate_forward.cpp
+    source/tool_handlers/tool_refresh.cpp
+    source/tool_handlers/tool_get_navigation_history.cpp
     source/tool_handlers/tool_capture_screenshot.cpp
 )
 

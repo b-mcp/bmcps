@@ -315,7 +315,7 @@ json send_command(const std::string &method, const json &params,
 
 // --- High-level browser operations ---
 
-browser_driver::DriverResult open_browser() {
+browser_driver::DriverResult open_browser(const browser_driver::OpenBrowserOptions &options) {
     browser_driver::DriverResult result;
     bool connected = false;
 
@@ -332,7 +332,7 @@ browser_driver::DriverResult open_browser() {
     }
 
     if (!connected) {
-        cdp_chrome_launch::ChromeLaunchResult launch_result = cdp_chrome_launch::launch_chrome();
+        cdp_chrome_launch::ChromeLaunchResult launch_result = cdp_chrome_launch::launch_chrome(options);
         if (!launch_result.success) {
             result.success = false;
             result.error_detail = launch_result.error_message;
@@ -520,6 +520,177 @@ browser_driver::NavigateResult navigate(const std::string &url) {
         }
     }
 
+    result.success = true;
+    return result;
+}
+
+browser_driver::DriverResult navigate_back() {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "Failed to navigate back.";
+        return result;
+    }
+
+    json history_response = send_command("Page.getNavigationHistory", json::object(),
+                                         global_state.current_session_id);
+    if (history_response.contains("error") && history_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = history_response["error"].get<std::string>();
+        result.message = "Failed to get navigation history.";
+        return result;
+    }
+    if (!history_response.contains("result") || !history_response["result"].contains("currentIndex") ||
+        !history_response["result"].contains("entries")) {
+        result.success = false;
+        result.error_detail = "Page.getNavigationHistory returned unexpected response.";
+        result.message = "Failed to navigate back.";
+        return result;
+    }
+
+    int current_index = history_response["result"]["currentIndex"].get<int>();
+    const auto &entries = history_response["result"]["entries"];
+    if (current_index <= 0 || entries.empty()) {
+        result.success = false;
+        result.error_detail = "No back history.";
+        result.message = "Cannot navigate back.";
+        return result;
+    }
+
+    int entry_id = entries[current_index - 1]["id"].get<int>();
+    json nav_params;
+    nav_params["entryId"] = entry_id;
+    json nav_response = send_command("Page.navigateToHistoryEntry", nav_params,
+                                     global_state.current_session_id);
+    if (nav_response.contains("error") && nav_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = nav_response["error"].get<std::string>();
+        result.message = "Failed to navigate back.";
+        return result;
+    }
+
+    result.success = true;
+    result.message = "Navigated back.";
+    return result;
+}
+
+browser_driver::DriverResult navigate_forward() {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "Failed to navigate forward.";
+        return result;
+    }
+
+    json history_response = send_command("Page.getNavigationHistory", json::object(),
+                                         global_state.current_session_id);
+    if (history_response.contains("error") && history_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = history_response["error"].get<std::string>();
+        result.message = "Failed to get navigation history.";
+        return result;
+    }
+    if (!history_response.contains("result") || !history_response["result"].contains("currentIndex") ||
+        !history_response["result"].contains("entries")) {
+        result.success = false;
+        result.error_detail = "Page.getNavigationHistory returned unexpected response.";
+        result.message = "Failed to navigate forward.";
+        return result;
+    }
+
+    int current_index = history_response["result"]["currentIndex"].get<int>();
+    const auto &entries = history_response["result"]["entries"];
+    int entries_count = static_cast<int>(entries.size());
+    if (current_index >= entries_count - 1 || entries.empty()) {
+        result.success = false;
+        result.error_detail = "No forward history.";
+        result.message = "Cannot navigate forward.";
+        return result;
+    }
+
+    int entry_id = entries[current_index + 1]["id"].get<int>();
+    json nav_params;
+    nav_params["entryId"] = entry_id;
+    json nav_response = send_command("Page.navigateToHistoryEntry", nav_params,
+                                     global_state.current_session_id);
+    if (nav_response.contains("error") && nav_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = nav_response["error"].get<std::string>();
+        result.message = "Failed to navigate forward.";
+        return result;
+    }
+
+    result.success = true;
+    result.message = "Navigated forward.";
+    return result;
+}
+
+browser_driver::DriverResult refresh() {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "Failed to reload page.";
+        return result;
+    }
+
+    json reload_response = send_command("Page.reload", json::object(),
+                                        global_state.current_session_id);
+    if (reload_response.contains("error") && reload_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = reload_response["error"].get<std::string>();
+        result.message = "Failed to reload page.";
+        return result;
+    }
+
+    result.success = true;
+    result.message = "Page reloaded.";
+    return result;
+}
+
+browser_driver::NavigationHistoryResult get_navigation_history() {
+    browser_driver::NavigationHistoryResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    json history_response = send_command("Page.getNavigationHistory", json::object(),
+                                         global_state.current_session_id);
+    if (history_response.contains("error") && history_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = history_response["error"].get<std::string>();
+        return result;
+    }
+    if (!history_response.contains("result") || !history_response["result"].contains("currentIndex") ||
+        !history_response["result"].contains("entries")) {
+        result.success = false;
+        result.error_detail = "Page.getNavigationHistory returned unexpected response.";
+        return result;
+    }
+
+    result.current_index = history_response["result"]["currentIndex"].get<int>();
+    const auto &entries_json = history_response["result"]["entries"];
+    for (const auto &entry : entries_json) {
+        browser_driver::NavigationHistoryEntry history_entry;
+        if (entry.contains("id")) {
+            history_entry.id = entry["id"].get<int>();
+        }
+        if (entry.contains("url") && entry["url"].is_string()) {
+            history_entry.url = entry["url"].get<std::string>();
+        }
+        if (entry.contains("title") && entry["title"].is_string()) {
+            history_entry.title = entry["title"].get<std::string>();
+        }
+        result.entries.push_back(history_entry);
+    }
     result.success = true;
     return result;
 }

@@ -6,6 +6,8 @@
 #include <string>
 #include <vector>
 
+#include "browser/browser_driver_abi.hpp"
+
 namespace cdp_chrome_launch {
 
 // Result of launching Chrome and discovering the debug port.
@@ -27,14 +29,15 @@ static const char BMCPS_FIXED_USER_DATA_DIR[] = "/tmp/bmcps_chrome_profile";
 std::string try_get_existing_websocket_url(const std::string &user_data_directory);
 
 // Launch Chrome with remote debugging on the fixed port and user-data-dir.
-ChromeLaunchResult launch_chrome();
+ChromeLaunchResult launch_chrome(const browser_driver::OpenBrowserOptions &options = {});
 
 // Build the command-line arguments for launching Chrome.
 struct ChromeCommandLine {
     std::string executable_path;
     std::vector<std::string> arguments;
 };
-ChromeCommandLine build_chrome_command_line(const std::string &user_data_directory, int port = BMCPS_FIXED_DEBUG_PORT);
+ChromeCommandLine build_chrome_command_line(const std::string &user_data_directory, int port,
+                                             const browser_driver::OpenBrowserOptions &options = {});
 
 // Find the Chrome executable on the system (platform-specific search).
 std::string find_chrome_executable();

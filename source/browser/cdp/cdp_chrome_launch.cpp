@@ -51,7 +51,8 @@ std::string find_chrome_executable() {
     return "";
 }
 
-ChromeCommandLine build_chrome_command_line(const std::string &user_data_directory, int port) {
+ChromeCommandLine build_chrome_command_line(const std::string &user_data_directory, int port,
+                                             const browser_driver::OpenBrowserOptions &options) {
     ChromeCommandLine command_line;
     command_line.executable_path = find_chrome_executable();
     command_line.arguments = {
@@ -73,11 +74,13 @@ ChromeCommandLine build_chrome_command_line(const std::string &user_data_directo
         "--disable-popup-blocking",
         "--disable-prompt-on-repost",
         "--disable-sync",
-        "--disable-translate",
         "--metrics-recording-only",
         "--safebrowsing-disable-auto-update",
         "about:blank",
     };
+    if (options.disable_translate) {
+        rest.push_back("--disable-features=Translate");
+    }
     command_line.arguments.insert(command_line.arguments.end(), rest.begin(), rest.end());
     return command_line;
 }
@@ -156,7 +159,7 @@ std::string try_get_existing_websocket_url(const std::string &user_data_director
     return build_websocket_url(port, browser_path);
 }
 
-ChromeLaunchResult launch_chrome() {
+ChromeLaunchResult launch_chrome(const browser_driver::OpenBrowserOptions &options) {
     ChromeLaunchResult result;
 
     debug_log::log("Chrome launch starting…");
@@ -165,7 +168,7 @@ ChromeLaunchResult launch_chrome() {
     std::filesystem::create_directories(profile_directory);
     result.user_data_directory = profile_directory;
 
-    ChromeCommandLine command_line = build_chrome_command_line(profile_directory, 0);
+    ChromeCommandLine command_line = build_chrome_command_line(profile_directory, 0, options);
 
     if (command_line.executable_path.empty()) {
         result.error_message = "Could not find Chrome executable on this system. "
