@@ -64,6 +64,12 @@ Restart Cursor (or reload the window). The following tools become available in c
 - **get_navigation_history** – get the current tab’s navigation history (URLs and current index; via CDP, not available from in-page JS)
 - **capture_screenshot** – capture a screenshot of the currently displayed tab; returns image content so the model can verify the visible UI (e.g. buttons, layout)
 - **get_console_messages** – get console messages (console.log, console.error, etc.) from the current tab. Parameters: **time_scope** (object with type: `none` | `last_duration` | `range` | `from_onwards` | `until`; for last_duration use value+unit; for range use from_ms+to_ms; for from_onwards use from_ms; for until use to_ms), **count_scope** (max_entries, default 500; order: newest_first | oldest_first), **level_scope** (type: min_level with level, or only with levels array). Response first line: `[bmcps-console] returned=N total_matching=M truncated=true|false`, then time_sync (browser/server time, offset, round-trip), then log lines. Console text is UTF-8 sanitized; buffer is limited (FIFO) to avoid unbounded memory use.
+- **list_interactive_elements** – list form fields and clickable elements (inputs, textareas, buttons, links, **option** and **role=option** for dropdowns) with selector, role, label, placeholder, type, and visible text. For combobox/listbox: open the dropdown first, then call again to get the options. Use the returned selectors with fill_field and click_element.
+- **fill_field** – fill an input or textarea by **selector** (from list_interactive_elements), **value** (string). Optional **clear_first** (default true).
+- **click_element** – click an element by **selector** (e.g. from list_interactive_elements).
+- **click_at_coordinates** – click at viewport coordinates **x**, **y** (CSS pixels). Useful for canvas or when no DOM selector is available.
+- **scroll** – scroll the page or a scrollable element. **scroll_scope**: type `page` (delta_x, delta_y for window) or type `element` (selector + delta_x, delta_y for a container).
+- **resize_browser** – resize the browser window. Either **preset** (vga, xga, hd, fullhd, 2k, 4k) or **width** and **height** in pixels. Default open size is 1024x768 (Chrome launch).
 
 ## Project structure
 

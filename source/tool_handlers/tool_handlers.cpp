@@ -14,6 +14,12 @@ namespace tool_refresh { void register_tool(); }
 namespace tool_get_navigation_history { void register_tool(); }
 namespace tool_capture_screenshot { void register_tool(); }
 namespace tool_get_console_messages { void register_tool(); }
+namespace tool_list_interactive_elements { void register_tool(); }
+namespace tool_fill_field { void register_tool(); }
+namespace tool_click_element { void register_tool(); }
+namespace tool_click_at_coordinates { void register_tool(); }
+namespace tool_scroll { void register_tool(); }
+namespace tool_resize_browser { void register_tool(); }
 
 namespace tool_handlers {
 
@@ -31,6 +37,12 @@ void register_all_tools() {
     tool_get_navigation_history::register_tool();
     tool_capture_screenshot::register_tool();
     tool_get_console_messages::register_tool();
+    tool_list_interactive_elements::register_tool();
+    tool_fill_field::register_tool();
+    tool_click_element::register_tool();
+    tool_click_at_coordinates::register_tool();
+    tool_scroll::register_tool();
+    tool_resize_browser::register_tool();
 }
 
 } // namespace tool_handlers

@@ -118,6 +118,25 @@ void enable_console_for_session();
 browser_driver::ConsoleMessagesResult get_console_messages(
     const browser_driver::GetConsoleMessagesOptions &options);
 
+// List form fields and clickable elements (label, placeholder, text, selector). Max ~100.
+browser_driver::ListInteractiveElementsResult list_interactive_elements();
+
+// Fill an input/textarea by selector. Optionally clear before typing.
+browser_driver::DriverResult fill_field(const std::string &selector, const std::string &value,
+                                        bool clear_first = true);
+
+// Click an element by selector (uses box model + Input.dispatchMouseEvent, fallback element.click()).
+browser_driver::DriverResult click_element(const std::string &selector);
+
+// Click at viewport coordinates (e.g. canvas). x, y in CSS pixels.
+browser_driver::DriverResult click_at_coordinates(int x, int y);
+
+// Scroll: page (window) or element (selector). delta_x, delta_y in pixels.
+browser_driver::DriverResult scroll(const browser_driver::ScrollScope &scroll_scope);
+
+// Resize browser window (Browser domain, no session). width/height in pixels.
+browser_driver::DriverResult set_window_bounds(int width, int height);
+
 // Get the connection state (for introspection / testing).
 ConnectionState &get_state();
 

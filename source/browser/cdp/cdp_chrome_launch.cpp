@@ -64,6 +64,7 @@ ChromeCommandLine build_chrome_command_line(const std::string &user_data_directo
         command_line.arguments.push_back("--no-sandbox");
     }
     std::vector<std::string> rest = {
+        "--window-size=1024,768",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-background-networking",

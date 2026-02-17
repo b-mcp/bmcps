@@ -142,6 +142,34 @@ struct ConsoleMessagesResult {
     TimeSyncInfo time_sync;
 };
 
+// --- Form / click automation ---
+
+// One interactive element (input, button, link) for list_interactive_elements.
+struct InteractiveElement {
+    std::string selector;
+    std::string role;      // "textbox", "button", "link", etc.
+    std::string label;     // associated label, placeholder, or aria-label
+    std::string placeholder;
+    std::string type;      // for inputs: "text", "email", "password", etc.
+    std::string text;      // visible text for buttons/links
+};
+
+struct ListInteractiveElementsResult {
+    bool success = false;
+    std::vector<InteractiveElement> elements;
+    std::string error_detail;
+};
+
+// Scroll scope: page or element (discriminated).
+enum class ScrollScopeType { Page, Element };
+
+struct ScrollScope {
+    ScrollScopeType type = ScrollScopeType::Page;
+    int delta_x = 0;
+    int delta_y = 0;
+    std::string selector;  // for Element only
+};
+
 } // namespace browser_driver
 
 #endif // BMCPS_BROWSER_DRIVER_ABI_HPP

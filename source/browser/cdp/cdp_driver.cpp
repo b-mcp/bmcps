@@ -1124,6 +1124,388 @@ browser_driver::ConsoleMessagesResult get_console_messages(
     return result;
 }
 
+static void ensure_dom_enabled() {
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        return;
+    }
+    json dom_enable_response = send_command("DOM.enable", json::object(),
+                                            global_state.current_session_id);
+    (void)dom_enable_response;
+}
+
+browser_driver::ListInteractiveElementsResult list_interactive_elements() {
+    browser_driver::ListInteractiveElementsResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    const char *script =
+        "(function(){"
+        "var max=100,sel='input,textarea,button,[role=button],a,option,[role=option]';"
+        "var nodes=document.querySelectorAll(sel);"
+        "var out=[],idx=0;"
+        "function esc(s){ if(!s)return''; return s.replace(/\\\\/g,'\\\\\\\\').replace(/\"/g,'\\\\\"').replace(/\\n/g,'\\\\n'); }"
+        "for(var i=0;i<nodes.length&&idx<max;i++){"
+        "var el=nodes[i];"
+        "if(!el.offsetParent&&el.tagName!=='INPUT'&&el.tagName!=='TEXTAREA'&&el.tagName!=='OPTION'&&el.getAttribute('role')!=='option')continue;"
+        "el.setAttribute('data-bmcps-id',String(idx));"
+        "var label='';"
+        "if(el.id){ var lbl=document.querySelector('label[for=\"'+el.id.replace(/\"/g,'\\\\\"')+'\"]'); if(lbl)label=(lbl.innerText||'').trim().substring(0,200); }"
+        "if(!label&&el.placeholder)label=el.placeholder;"
+        "if(!label&&el.getAttribute('aria-label'))label=el.getAttribute('aria-label')||'';"
+        "var role=el.getAttribute('role')||(el.tagName==='A'?'link':el.tagName.toLowerCase());"
+        "var text=(el.innerText||'').trim().substring(0,200);"
+        "out.push({selector:'[data-bmcps-id=\"'+idx+'\"]',role:role,label:label,placeholder:(el.placeholder||''),type:(el.type||''),text:text});"
+        "idx++;"
+        "}"
+        "return JSON.stringify(out);"
+        "})()";
+
+    json eval_params;
+    eval_params["expression"] = script;
+    eval_params["returnByValue"] = true;
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 8000);
+
+    if (eval_response.contains("error") && eval_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = eval_response["error"].get<std::string>();
+        return result;
+    }
+    if (!eval_response.contains("result") || !eval_response["result"].contains("result")) {
+        result.success = false;
+        result.error_detail = "Runtime.evaluate did not return a result.";
+        return result;
+    }
+
+    const auto &res = eval_response["result"]["result"];
+    if (!res.contains("value") || !res["value"].is_string()) {
+        result.success = false;
+        result.error_detail = "list_interactive_elements script did not return JSON string.";
+        return result;
+    }
+
+    std::string json_string = res["value"].get<std::string>();
+    try {
+        json array = json::parse(json_string);
+        for (const auto &item : array) {
+            browser_driver::InteractiveElement element;
+            if (item.contains("selector") && item["selector"].is_string()) {
+                element.selector = item["selector"].get<std::string>();
+            }
+            if (item.contains("role") && item["role"].is_string()) {
+                element.role = item["role"].get<std::string>();
+            }
+            if (item.contains("label") && item["label"].is_string()) {
+                element.label = item["label"].get<std::string>();
+            }
+            if (item.contains("placeholder") && item["placeholder"].is_string()) {
+                element.placeholder = item["placeholder"].get<std::string>();
+            }
+            if (item.contains("type") && item["type"].is_string()) {
+                element.type = item["type"].get<std::string>();
+            }
+            if (item.contains("text") && item["text"].is_string()) {
+                element.text = item["text"].get<std::string>();
+            }
+            utf8_sanitize::sanitize(element.selector);
+            utf8_sanitize::sanitize(element.role);
+            utf8_sanitize::sanitize(element.label);
+            utf8_sanitize::sanitize(element.placeholder);
+            utf8_sanitize::sanitize(element.type);
+            utf8_sanitize::sanitize(element.text);
+            result.elements.push_back(element);
+        }
+    } catch (const json::parse_error &) {
+        result.success = false;
+        result.error_detail = "Failed to parse list_interactive_elements JSON.";
+        return result;
+    }
+
+    result.success = true;
+    return result;
+}
+
+browser_driver::DriverResult fill_field(const std::string &selector, const std::string &value,
+                                        bool clear_first) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "fill_field failed.";
+        return result;
+    }
+
+    std::string escaped_selector = json(selector).dump();
+    std::string escaped_value = json(value).get<std::string>();
+
+    std::string focus_script = "var el=document.querySelector(" + escaped_selector + ");"
+        "if(!el){ throw new Error('Element not found: ' + " + escaped_selector + "); }"
+        "el.focus();";
+    if (clear_first) {
+        focus_script += "el.value='';"
+            "el.dispatchEvent(new Event('input',{bubbles:true}));"
+            "el.dispatchEvent(new Event('change',{bubbles:true}));";
+    }
+
+    json eval_params;
+    eval_params["expression"] = focus_script;
+    json focus_response = send_command("Runtime.evaluate", eval_params,
+                                       global_state.current_session_id, 5000);
+    if (focus_response.contains("result") && focus_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        result.error_detail = "Element not found or focus failed: " + selector;
+        result.message = "fill_field failed.";
+        return result;
+    }
+
+    json insert_params;
+    insert_params["text"] = value;
+    json insert_response = send_command("Input.insertText", insert_params,
+                                        global_state.current_session_id, 5000);
+    if (insert_response.contains("error") && insert_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = insert_response["error"].get<std::string>();
+        result.message = "fill_field failed.";
+        return result;
+    }
+
+    result.success = true;
+    result.message = "Field filled.";
+    return result;
+}
+
+browser_driver::DriverResult click_element(const std::string &selector) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "click_element failed.";
+        return result;
+    }
+
+    ensure_dom_enabled();
+
+    json get_doc_response = send_command("DOM.getDocument", json::object(),
+                                         global_state.current_session_id);
+    if (!get_doc_response.contains("result") || !get_doc_response["result"].contains("root")) {
+        result.success = false;
+        result.error_detail = "DOM.getDocument failed.";
+        result.message = "click_element failed.";
+        return result;
+    }
+    int root_node_id = get_doc_response["result"]["root"]["nodeId"].get<int>();
+
+    json query_params;
+    query_params["nodeId"] = root_node_id;
+    query_params["selector"] = selector;
+    json query_response = send_command("DOM.querySelector", query_params,
+                                       global_state.current_session_id);
+    if (!query_response.contains("result") || query_response["result"]["nodeId"].get<int>() == 0) {
+        std::string click_script = "var el=document.querySelector(" + json(selector).dump() + ");"
+            "if(!el)throw new Error('Not found'); el.click();";
+        json eval_params;
+        eval_params["expression"] = click_script;
+        json eval_response = send_command("Runtime.evaluate", eval_params,
+                                          global_state.current_session_id, 5000);
+        if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+            result.success = false;
+            result.error_detail = "Element not found: " + selector;
+            result.message = "click_element failed.";
+            return result;
+        }
+        result.success = true;
+        result.message = "Clicked (fallback).";
+        return result;
+    }
+
+    int node_id = query_response["result"]["nodeId"].get<int>();
+    json box_params;
+    box_params["nodeId"] = node_id;
+    json box_response = send_command("DOM.getBoxModel", box_params,
+                                     global_state.current_session_id);
+    if (!box_response.contains("result") || !box_response["result"].contains("model") ||
+        !box_response["result"]["model"].contains("content")) {
+        std::string click_script = "var el=document.querySelector(" + json(selector).dump() + ");"
+            "if(!el)throw new Error('Not found'); el.click();";
+        json eval_params;
+        eval_params["expression"] = click_script;
+        json eval_response = send_command("Runtime.evaluate", eval_params,
+                                          global_state.current_session_id, 5000);
+        if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+            result.success = false;
+            result.error_detail = "Element not found or no box model: " + selector;
+            result.message = "click_element failed.";
+            return result;
+        }
+        result.success = true;
+        result.message = "Clicked (fallback).";
+        return result;
+    }
+
+    const auto &content = box_response["result"]["model"]["content"];
+    double left = content[0].get<double>();
+    double top = content[1].get<double>();
+    double right = content[4].get<double>();
+    double bottom = content[5].get<double>();
+    int x = static_cast<int>((left + right) / 2);
+    int y = static_cast<int>((top + bottom) / 2);
+
+    json mouse_press;
+    mouse_press["type"] = "mousePressed";
+    mouse_press["x"] = x;
+    mouse_press["y"] = y;
+    mouse_press["button"] = "left";
+    mouse_press["clickCount"] = 1;
+    json mouse_release;
+    mouse_release["type"] = "mouseReleased";
+    mouse_release["x"] = x;
+    mouse_release["y"] = y;
+    mouse_release["button"] = "left";
+    mouse_release["clickCount"] = 1;
+
+    json press_response = send_command("Input.dispatchMouseEvent", mouse_press,
+                                       global_state.current_session_id);
+    json release_response = send_command("Input.dispatchMouseEvent", mouse_release,
+                                        global_state.current_session_id);
+    (void)press_response;
+    (void)release_response;
+
+    result.success = true;
+    result.message = "Clicked.";
+    return result;
+}
+
+browser_driver::DriverResult click_at_coordinates(int x, int y) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "click_at_coordinates failed.";
+        return result;
+    }
+
+    json mouse_press;
+    mouse_press["type"] = "mousePressed";
+    mouse_press["x"] = x;
+    mouse_press["y"] = y;
+    mouse_press["button"] = "left";
+    mouse_press["clickCount"] = 1;
+    json mouse_release;
+    mouse_release["type"] = "mouseReleased";
+    mouse_release["x"] = x;
+    mouse_release["y"] = y;
+    mouse_release["button"] = "left";
+    mouse_release["clickCount"] = 1;
+
+    json press_response = send_command("Input.dispatchMouseEvent", mouse_press,
+                                       global_state.current_session_id);
+    json release_response = send_command("Input.dispatchMouseEvent", mouse_release,
+                                        global_state.current_session_id);
+    (void)press_response;
+    (void)release_response;
+
+    result.success = true;
+    result.message = "Clicked at coordinates.";
+    return result;
+}
+
+browser_driver::DriverResult scroll(const browser_driver::ScrollScope &scroll_scope) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "scroll failed.";
+        return result;
+    }
+
+    int delta_x = scroll_scope.delta_x;
+    int delta_y = scroll_scope.delta_y;
+
+    if (scroll_scope.type == browser_driver::ScrollScopeType::Page) {
+        std::string script = "window.scrollBy(" + std::to_string(delta_x) + "," + std::to_string(delta_y) + ");";
+        json eval_params;
+        eval_params["expression"] = script;
+        json eval_response = send_command("Runtime.evaluate", eval_params,
+                                          global_state.current_session_id, 5000);
+        if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+            result.success = false;
+            result.error_detail = "window.scrollBy failed.";
+            result.message = "scroll failed.";
+            return result;
+        }
+    } else {
+        std::string escaped_selector = json(scroll_scope.selector).dump();
+        std::string script = "var el=document.querySelector(" + escaped_selector + ");"
+            "if(!el)throw new Error('Element not found');"
+            "el.scrollBy(" + std::to_string(delta_x) + "," + std::to_string(delta_y) + ");";
+        json eval_params;
+        eval_params["expression"] = script;
+        json eval_response = send_command("Runtime.evaluate", eval_params,
+                                          global_state.current_session_id, 5000);
+        if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+            result.success = false;
+            result.error_detail = "Element not found or scroll failed: " + scroll_scope.selector;
+            result.message = "scroll failed.";
+            return result;
+        }
+    }
+
+    result.success = true;
+    result.message = "Scrolled.";
+    return result;
+}
+
+browser_driver::DriverResult set_window_bounds(int width, int height) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_target_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser. Call open_browser first.";
+        result.message = "set_window_bounds failed.";
+        return result;
+    }
+
+    json get_window_params;
+    get_window_params["targetId"] = global_state.current_target_id;
+    json get_window_response = send_command("Browser.getWindowForTarget", get_window_params, "", 5000);
+
+    if (!get_window_response.contains("result") || !get_window_response["result"].contains("windowId")) {
+        result.success = false;
+        result.error_detail = "Browser.getWindowForTarget failed or no windowId.";
+        result.message = "set_window_bounds failed.";
+        return result;
+    }
+
+    int window_id = get_window_response["result"]["windowId"].get<int>();
+
+    json bounds;
+    bounds["width"] = width;
+    bounds["height"] = height;
+    json set_params;
+    set_params["windowId"] = window_id;
+    set_params["bounds"] = bounds;
+    json set_response = send_command("Browser.setWindowBounds", set_params, "", 5000);
+
+    if (set_response.contains("error") && set_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = set_response["error"].get<std::string>();
+        result.message = "set_window_bounds failed.";
+        return result;
+    }
+
+    result.success = true;
+    result.message = "Window resized to " + std::to_string(width) + "x" + std::to_string(height) + ".";
+    return result;
+}
+
 ConnectionState &get_state() {
     return global_state;
 }

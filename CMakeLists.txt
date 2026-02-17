@@ -49,6 +49,12 @@ set(BMCPS_SOURCES
     source/tool_handlers/tool_get_navigation_history.cpp
     source/tool_handlers/tool_capture_screenshot.cpp
     source/tool_handlers/tool_get_console_messages.cpp
+    source/tool_handlers/tool_list_interactive_elements.cpp
+    source/tool_handlers/tool_fill_field.cpp
+    source/tool_handlers/tool_click_element.cpp
+    source/tool_handlers/tool_click_at_coordinates.cpp
+    source/tool_handlers/tool_scroll.cpp
+    source/tool_handlers/tool_resize_browser.cpp
 )
 
 add_executable(bmcps ${BMCPS_SOURCES})
