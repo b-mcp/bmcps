@@ -37,6 +37,7 @@ namespace tool_switch_tab {
 void register_tool() {
     json input_schema;
     input_schema["type"] = "object";
+    input_schema["properties"] = json::object();
     input_schema["properties"]["index"] = {
         {"type", "integer"},
         {"description", "0-based tab index (page targets only)"}

@@ -38,7 +38,7 @@ namespace tool_get_clipboard {
 void register_tool() {
     json input_schema;
     input_schema["type"] = "object";
-    input_schema["properties"] = {};
+    input_schema["properties"] = json::object();
 
     mcp_tools::register_tool({
         "get_clipboard",

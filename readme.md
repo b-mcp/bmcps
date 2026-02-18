@@ -31,7 +31,7 @@ Binary: `build/bmcps`.
 
 ## How to use
 
-1. Add BMCPS to your MCP configuration (e.g. `.cursor/mcp.json` or `~/.cursor/mcp.json`):
+1. Add BMCPS to your MCP configuration (e.g. `.cursor/mcp.json` in the project, or `~/.cursor/mcp.json`). A **real absolute path** to the binary is required (no placeholder):
 
 ```json
 {
@@ -43,7 +43,8 @@ Binary: `build/bmcps`.
 }
 ```
 
-2. Set **command** to the **absolute path** of the `bmcps` binary (e.g. `/home/you/project/build/bmcps`). There is no system-wide install step; use the path of the binary you built.
+   Replace the path with your actual path to `build/bmcps` (e.g. if the project is at `/home/you/bmcps`, use `/home/you/bmcps/build/bmcps`). If you use a placeholder like `/absolute/path/to/build/bmcps`, Cursor will fail with `spawn ... ENOENT`.
+2. There is no system-wide install step; use the path of the binary you built.
 3. Restart Cursor (or reload the window). The tools then appear in chat.
 
 ## What it can do (tool sample)

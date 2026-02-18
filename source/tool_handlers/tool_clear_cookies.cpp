@@ -38,7 +38,7 @@ namespace tool_clear_cookies {
 void register_tool() {
     json input_schema;
     input_schema["type"] = "object";
-    input_schema["properties"] = {};
+    input_schema["properties"] = json::object();
 
     mcp_tools::register_tool({
         "clear_cookies",

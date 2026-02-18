@@ -39,6 +39,7 @@ namespace tool_new_tab {
 void register_tool() {
     json input_schema;
     input_schema["type"] = "object";
+    input_schema["properties"] = json::object();
     input_schema["properties"]["url"] = {
         {"type", "string"},
         {"description", "Optional URL to open in the new tab (default: about:blank)"}

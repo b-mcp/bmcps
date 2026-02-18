@@ -17,7 +17,13 @@ json build_tools_list_response() {
         json tool_entry;
         tool_entry["name"] = tool.name;
         tool_entry["description"] = tool.description;
-        tool_entry["inputSchema"] = tool.input_schema;
+        json schema = tool.input_schema;
+        // Cursor (and strict MCP clients) expect inputSchema.properties to be an
+        // object, not null. Ensure it is always at least {}.
+        if (!schema.contains("properties") || !schema["properties"].is_object()) {
+            schema["properties"] = json::object();
+        }
+        tool_entry["inputSchema"] = std::move(schema);
         tools_array.push_back(tool_entry);
     }
 

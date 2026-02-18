@@ -38,7 +38,7 @@ namespace tool_switch_to_main_frame {
 void register_tool() {
     json input_schema;
     input_schema["type"] = "object";
-    input_schema["properties"] = {};
+    input_schema["properties"] = json::object();
 
     mcp_tools::register_tool({
         "switch_to_main_frame",
