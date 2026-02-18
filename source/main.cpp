@@ -3,6 +3,7 @@
 //
 // Reads JSON-RPC 2.0 messages from stdin, dispatches them, writes responses to stdout.
 // Logs go to stderr (permitted by MCP spec).
+// CDP rx buffer size: set by the client in MCP initialize params (initializationOptions.cdpRxBufferMb, 1–20 MB, default 5).
 
 #include <nlohmann/json.hpp>
 #include <iostream>

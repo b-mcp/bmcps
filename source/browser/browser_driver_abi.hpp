@@ -48,11 +48,17 @@ struct NavigateResult {
     std::string error_text; // CDP errorText if navigation failed
 };
 
+// Options for capture_screenshot. Caller chooses format; default JPEG 70 to keep payload small.
+struct CaptureScreenshotOptions {
+    std::string format = "jpeg";  // "png" or "jpeg"
+    int quality = 70;              // 1–100, only for jpeg; lower = smaller file
+};
+
 // Result of capturing a screenshot of the current tab.
 struct CaptureScreenshotResult {
     bool success = false;
     std::string image_base64;
-    std::string mime_type;   // e.g. "image/png"
+    std::string mime_type;   // e.g. "image/png", "image/jpeg"
     std::string error_detail;
 };
 

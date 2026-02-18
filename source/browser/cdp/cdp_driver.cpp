@@ -20,16 +20,8 @@ static ConnectionState global_state;
 static int websocket_callback(struct lws *websocket_instance, enum lws_callback_reasons reason,
                                void *user_data, void *incoming_data, size_t incoming_length);
 
-// WebSocket protocol definition for libwebsockets.
-static const struct lws_protocols websocket_protocols[] = {
-    {
-        "cdp-protocol",
-        websocket_callback,
-        0,    // per-session data size
-        65536 // rx buffer size
-    },
-    {nullptr, nullptr, 0, 0} // sentinel
-};
+// WebSocket protocol definition for libwebsockets. Filled at runtime in initialize() with cdp_rx_buffer_size.
+static struct lws_protocols websocket_protocols[2];
 
 // --- WebSocket callback ---
 
@@ -240,7 +232,13 @@ static int websocket_callback(struct lws *websocket_instance, enum lws_callback_
 
 // --- Public functions ---
 
+static constexpr size_t kCdpRxBufferMinBytes = 1 * 1024 * 1024;   // 1 MB
+static constexpr size_t kCdpRxBufferMaxBytes = 20 * 1024 * 1024;   // 20 MB
+static constexpr size_t kCdpRxBufferDefaultBytes = 5 * 1024 * 1024; // 5 MB
+
 void initialize() {
+    global_state.cdp_rx_buffer_size = kCdpRxBufferDefaultBytes;
+
     // Reset scalar fields individually; mutex and condition_variable are not assignable.
     global_state.connected = false;
     global_state.shutting_down = false;
@@ -262,6 +260,20 @@ void initialize() {
         global_state.pending_responses.clear();
     }
     global_state.receive_buffer.clear();
+}
+
+void set_cdp_rx_buffer_size_mb(int size_mb) {
+    if (size_mb < 1) {
+        size_mb = 1;
+    }
+    if (size_mb > 20) {
+        size_mb = 20;
+    }
+    global_state.cdp_rx_buffer_size = static_cast<size_t>(size_mb) * 1024 * 1024;
+}
+
+size_t get_cdp_rx_buffer_size() {
+    return global_state.cdp_rx_buffer_size;
 }
 
 bool connect(const std::string &websocket_url) {
@@ -298,7 +310,16 @@ bool connect(const std::string &websocket_url) {
         }
     }
 
-    // Create libwebsockets context.
+    // Create libwebsockets context. Protocol rx buffer size is fixed at connect() time from current cdp_rx_buffer_size.
+    websocket_protocols[0].name = "cdp-protocol";
+    websocket_protocols[0].callback = websocket_callback;
+    websocket_protocols[0].per_session_data_size = 0;
+    websocket_protocols[0].rx_buffer_size = static_cast<unsigned int>(global_state.cdp_rx_buffer_size);
+    websocket_protocols[1].name = nullptr;
+    websocket_protocols[1].callback = nullptr;
+    websocket_protocols[1].per_session_data_size = 0;
+    websocket_protocols[1].rx_buffer_size = 0;
+
     struct lws_context_creation_info context_info;
     memset(&context_info, 0, sizeof(context_info));
     context_info.port = CONTEXT_PORT_NO_LISTEN; // Client mode, no listening.
@@ -1017,7 +1038,8 @@ browser_driver::DriverResult close_tab() {
     return result;
 }
 
-browser_driver::CaptureScreenshotResult capture_screenshot() {
+browser_driver::CaptureScreenshotResult capture_screenshot(
+    const browser_driver::CaptureScreenshotOptions &options) {
     browser_driver::CaptureScreenshotResult result;
 
     if (!global_state.connected || global_state.current_session_id.empty()) {
@@ -1026,8 +1048,23 @@ browser_driver::CaptureScreenshotResult capture_screenshot() {
         return result;
     }
 
+    std::string format = options.format;
+    if (format != "png" && format != "jpeg") {
+        format = "jpeg";
+    }
+    int quality = options.quality;
+    if (quality < 1) {
+        quality = 1;
+    }
+    if (quality > 100) {
+        quality = 100;
+    }
+
     json capture_params;
-    capture_params["format"] = "png";
+    capture_params["format"] = format;
+    if (format == "jpeg") {
+        capture_params["quality"] = quality;
+    }
     json capture_response = send_command("Page.captureScreenshot", capture_params,
                                          global_state.current_session_id);
 
@@ -1039,10 +1076,21 @@ browser_driver::CaptureScreenshotResult capture_screenshot() {
 
     if (capture_response.contains("result") && capture_response["result"].contains("data") &&
         capture_response["result"]["data"].is_string()) {
-        result.success = true;
         result.image_base64 = capture_response["result"]["data"].get<std::string>();
-        result.mime_type = "image/png";
-        debug_log::log("capture_screenshot: captured " + std::to_string(result.image_base64.size()) + " bytes base64");
+        result.mime_type = (format == "png") ? "image/png" : "image/jpeg";
+        size_t payload_bytes = result.image_base64.size();
+        size_t max_bytes = get_cdp_rx_buffer_size();
+        if (payload_bytes > max_bytes) {
+            result.success = false;
+            result.image_base64.clear();
+            result.error_detail = "Screenshot too large (" + std::to_string(payload_bytes) +
+                                  " bytes base64). Maximum allowed is " + std::to_string(max_bytes) +
+                                  " bytes. Reduce viewport size (e.g. resize_browser) or use JPEG with lower quality.";
+        } else {
+            result.success = true;
+            debug_log::log("capture_screenshot: format=" + format + " quality=" + std::to_string(quality) +
+                           " captured " + std::to_string(payload_bytes) + " bytes base64");
+        }
     } else {
         result.success = false;
         result.error_detail = "Page.captureScreenshot did not return image data.";

@@ -3,6 +3,7 @@
 
 #include "protocol/json_rpc.hpp"
 #include "mcp/mcp_tools.hpp"
+#include "browser/cdp/cdp_driver.hpp"
 
 // MCP JSON-RPC method dispatch.
 // Routes incoming MCP messages to the appropriate handler.
@@ -24,11 +25,19 @@ static const std::string SERVER_DESCRIPTION =
     "you need to open URLs, navigate, fill forms, click elements, capture "
     "screenshots, manage tabs, read console logs, or perform any browser-based "
     "automation. Tools include open_browser, navigate, list_tabs, fill_field, "
-    "click_element, capture_screenshot, get_console_messages, and more.";
+    "click_element, capture_screenshot, get_console_messages, and more. "
+    "To set the maximum screenshot payload size (1–20 MB), send initializationOptions.cdpRxBufferMb in the initialize request params; default is 5 MB.";
 
 // Handle the "initialize" request.
+// Optional: initializationOptions.cdpRxBufferMb (1–20). CDP WebSocket rx buffer and max screenshot payload size in MB; default 5.
 static json handle_initialize(const json &request_id, const json &params) {
-    (void)params; // We accept any client capabilities for now.
+    if (params.is_object() && params.contains("initializationOptions") && params["initializationOptions"].is_object()) {
+        const json &options = params["initializationOptions"];
+        if (options.contains("cdpRxBufferMb") && options["cdpRxBufferMb"].is_number_integer()) {
+            int size_mb = options["cdpRxBufferMb"].get<int>();
+            cdp_driver::set_cdp_rx_buffer_size_mb(size_mb);
+        }
+    }
 
     json capabilities;
     capabilities["tools"] = json::object(); // We expose tools.
@@ -42,6 +51,9 @@ static json handle_initialize(const json &request_id, const json &params) {
     result["protocolVersion"] = PROTOCOL_VERSION;
     result["capabilities"] = capabilities;
     result["serverInfo"] = server_info;
+    // Hint for client/AI: where to set the screenshot size limit (so Cursor or config can apply it).
+    result["clientConfiguration"] = "To set the CDP receive buffer and max screenshot size in MB (1–20, default 5), "
+                                    "send initializationOptions.cdpRxBufferMb in the initialize request params.";
 
     return json_rpc::build_response(request_id, result);
 }

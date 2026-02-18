@@ -31,6 +31,11 @@ make -j$(nproc)
 
 Binary: `build/bmcps`.
 
+**Optional MCP initialize parameter (set by the client at initialization):**
+
+- The client (e.g. Cursor) may send an optional setting in the MCP `initialize` request **params**: `initializationOptions.cdpRxBufferMb` (integer, 1–20). This is the CDP WebSocket receive buffer and maximum screenshot payload size in MB; default is 5. If the screenshot base64 exceeds this size, the tool returns a clear error to the caller: *"Screenshot too large (X bytes base64). Maximum allowed is Y bytes. Reduce viewport size (e.g. resize_browser) or use JPEG with lower quality."*
+- The server also indicates in the **initialize response** where to set the limit: the `serverInfo.description` and `clientConfiguration` fields state that the size can be set by sending `initializationOptions.cdpRxBufferMb` in the initialize request params. Thus the client or model can apply the setting based on the documentation and the init response.
+
 **Tests:**
 
 ```bash
@@ -52,7 +57,6 @@ cd build && cmake --build . --target bmcps_smoke_test && ./tests/bmcps_smoke_tes
 
 ## Commit and PR standards
 
-- Commit messages should be concise; use the repository’s usual language (e.g. English or Hungarian as per repo convention).
 - Run `git pull` before committing to avoid unnecessary merge conflicts.
 - Prefer submitting a **pull request** instead of pushing directly to the main branch when the project policy requires it.
 - Before committing, verify that the change still builds and tests pass.
@@ -81,7 +85,7 @@ Tools exposed to the MCP client (e.g. Cursor). Use the selectors and parameters 
 | **navigate_forward** | Go forward in the current tab’s history. | — |
 | **refresh** | Reload the current tab. | — |
 | **get_navigation_history** | Get the current tab’s navigation history (URLs and current index). | — |
-| **capture_screenshot** | Capture a screenshot of the currently displayed tab; returns image content for the model to inspect (e.g. buttons, layout). | — |
+| **capture_screenshot** | Capture a screenshot of the currently displayed tab; returns image content for the model to inspect (e.g. buttons, layout). Default: JPEG quality 70. Caller can set **format** (png \| jpeg) and **quality** (1–100 for jpeg). If the image exceeds the configured max payload size (see `initializationOptions.cdpRxBufferMb`), a clear error is returned instead of the image. | **format** (optional): `png` \| `jpeg`. **quality** (optional): 1–100 for jpeg. |
 | **get_console_messages** | Get console messages (console.log, console.error, etc.) from the current tab. | **time_scope** (object: type `none` \| `last_duration` \| `range` \| `from_onwards` \| `until`; for last_duration use value+unit; for range use from_ms+to_ms; for from_onwards use from_ms; for until use to_ms). **count_scope**: max_entries (default 500), order (newest_first \| oldest_first). **level_scope**: type min_level with level, or only with levels array. Response starts with `[bmcps-console] returned=N total_matching=M truncated=true|false`, then time sync and log lines. UTF-8 sanitized; FIFO buffer to limit memory. |
 | **list_interactive_elements** | List form fields and clickable elements (inputs, textareas, buttons, links, option and role=option for dropdowns). Returns selector, role, label, placeholder, type, visible text. For combobox/listbox, open the dropdown first then call again for options. Use returned selectors with fill_field and click_element. | — |
 | **fill_field** | Fill an input or textarea by selector (from list_interactive_elements). | **selector**, **value**. Optional **clear_first** (default true). |

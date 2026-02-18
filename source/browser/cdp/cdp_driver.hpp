@@ -49,6 +49,9 @@ struct ConnectionState {
     // Buffer for incoming WebSocket data.
     std::string receive_buffer;
 
+    // CDP WebSocket receive buffer size in bytes (configurable at init, 1–20 MB). Used for LWS rx_buffer_size and as max screenshot payload size.
+    size_t cdp_rx_buffer_size = 5 * 1024 * 1024;
+
     // Console messages buffer (Runtime.consoleAPICalled for current tab).
     std::vector<browser_driver::ConsoleEntry> console_entries;
     std::mutex console_mutex;
@@ -72,7 +75,15 @@ struct ConnectionState {
 };
 
 // Initialize the CDP driver (set up global state). Call once at startup.
+// Buffer size is taken from set_cdp_rx_buffer_size_mb() (e.g. from MCP initialize params); default 5 MB until then.
 void initialize();
+
+// Set CDP WebSocket rx buffer (and max screenshot payload) size in MB. Allowed 1–20; applied at next connect().
+// Call from MCP initialize handler when client sends initializationOptions.cdpRxBufferMb.
+void set_cdp_rx_buffer_size_mb(int size_mb);
+
+// Return the configured CDP rx buffer size in bytes (used as max screenshot payload size).
+size_t get_cdp_rx_buffer_size();
 
 // Connect to Chrome via WebSocket at the given URL.
 // Returns true on success.
@@ -125,7 +136,9 @@ browser_driver::DriverResult switch_tab(int index);
 browser_driver::DriverResult close_tab();
 
 // Capture a screenshot of the current tab. Returns base64 image data and mime type.
-browser_driver::CaptureScreenshotResult capture_screenshot();
+// Options: format (png/jpeg), quality (for jpeg). Default jpeg@85 to avoid large payloads (413).
+browser_driver::CaptureScreenshotResult capture_screenshot(
+    const browser_driver::CaptureScreenshotOptions &options = {});
 
 // Enable Runtime for the current session and clear console buffer. Call after attach.
 void enable_console_for_session();

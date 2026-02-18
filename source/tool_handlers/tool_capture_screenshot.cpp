@@ -9,12 +9,28 @@ using json = nlohmann::json;
 
 // Tool handler for "capture_screenshot".
 // Captures a screenshot of the currently displayed browser tab via CDP Page.captureScreenshot.
+// Default: jpeg quality 70. Caller can set format (png | jpeg) and quality. If image exceeds max payload size, a clear error is returned.
 
 static json handle_capture_screenshot(const json &arguments) {
-    (void)arguments;
+    browser_driver::CaptureScreenshotOptions options;
+    options.format = "jpeg";
+    options.quality = 70;
 
-    debug_log::log("capture_screenshot invoked");
-    browser_driver::CaptureScreenshotResult screenshot_result = cdp_driver::capture_screenshot();
+    if (arguments.contains("format") && arguments["format"].is_string()) {
+        std::string format_arg = arguments["format"].get<std::string>();
+        if (format_arg == "png" || format_arg == "jpeg") {
+            options.format = format_arg;
+        }
+    }
+    if (arguments.contains("quality") && arguments["quality"].is_number_integer()) {
+        int quality_arg = arguments["quality"].get<int>();
+        if (quality_arg >= 1 && quality_arg <= 100) {
+            options.quality = quality_arg;
+        }
+    }
+
+    debug_log::log("capture_screenshot invoked format=" + options.format + " quality=" + std::to_string(options.quality));
+    browser_driver::CaptureScreenshotResult screenshot_result = cdp_driver::capture_screenshot(options);
 
     json result;
 
@@ -48,13 +64,24 @@ void register_tool() {
     json input_schema;
     input_schema["type"] = "object";
     input_schema["properties"] = json::object();
+    input_schema["properties"]["format"] = {
+        {"type", "string"},
+        {"enum", json::array({"png", "jpeg"})},
+        {"description", "Image format: jpeg (default) or png. Caller chooses."}
+    };
+    input_schema["properties"]["quality"] = {
+        {"type", "integer"},
+        {"description", "JPEG quality 1–100 (default 70). Only used when format is jpeg. Lower = smaller file."}
+    };
     input_schema["required"] = json::array();
 
     mcp_tools::register_tool({
         "capture_screenshot",
         "Capture a screenshot of the currently displayed browser tab. "
-        "The browser must be open and a tab must be attached (call open_browser first). "
-        "Returns the screenshot as image content so the model can verify the visible UI (e.g. buttons, layout).",
+        "Default: jpeg quality 70. Optional: format (png | jpeg), quality (1–100 for jpeg). "
+        "If the image exceeds the configured max size, a clear error is returned (reduce viewport or lower quality). "
+        "Browser must be open and a tab attached (call open_browser first). "
+        "Returns the screenshot as image content so the model can verify the visible UI.",
         input_schema,
         handle_capture_screenshot
     });
