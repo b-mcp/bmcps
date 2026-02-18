@@ -34,7 +34,7 @@ static bool check_argument_present(const std::vector<std::string> &arguments,
 
 // Test: Chrome command line contains --remote-debugging-port.
 static bool test_command_line_has_remote_debugging_port() {
-    auto command_line = cdp_chrome_launch::build_chrome_command_line("/tmp/test_profile");
+    auto command_line = cdp_chrome_launch::build_chrome_command_line("/tmp/test_profile", 0, {});
     return check_argument_present(command_line.arguments,
                                    "--remote-debugging-port",
                                    "Command line contains --remote-debugging-port");
@@ -43,7 +43,7 @@ static bool test_command_line_has_remote_debugging_port() {
 // Test: Chrome command line contains --user-data-dir with the given path.
 static bool test_command_line_has_user_data_directory() {
     std::string test_directory = "/tmp/test_profile_xyz";
-    auto command_line = cdp_chrome_launch::build_chrome_command_line(test_directory);
+    auto command_line = cdp_chrome_launch::build_chrome_command_line(test_directory, 0, {});
     return check_argument_present(command_line.arguments,
                                    "--user-data-dir=" + test_directory,
                                    "Command line contains --user-data-dir with correct path");
@@ -51,7 +51,7 @@ static bool test_command_line_has_user_data_directory() {
 
 // Test: Chrome command line contains --no-first-run.
 static bool test_command_line_has_no_first_run() {
-    auto command_line = cdp_chrome_launch::build_chrome_command_line("/tmp/test_profile");
+    auto command_line = cdp_chrome_launch::build_chrome_command_line("/tmp/test_profile", 0, {});
     return check_argument_present(command_line.arguments,
                                    "--no-first-run",
                                    "Command line contains --no-first-run");

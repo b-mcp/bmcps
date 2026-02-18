@@ -89,6 +89,41 @@ Tools exposed to the MCP client (e.g. Cursor). Use the selectors and parameters 
 | **click_at_coordinates** | Click at viewport coordinates (x, y in CSS pixels). Use for canvas or when no DOM selector is available. | **x**, **y**. |
 | **scroll** | Scroll the page or a scrollable element. | **scroll_scope**: type `page` (delta_x, delta_y for window) or type `element` (selector + delta_x, delta_y for container). |
 | **resize_browser** | Resize the browser window. | **preset** (vga, xga, hd, fullhd, 2k, 4k) or **width** and **height** in pixels. Default open size is 1024×768. |
+| **evaluate_javascript** | Execute JavaScript in the page and return the result as JSON. | **script** (string). Optional **timeout_milliseconds** (default 10000). |
+| **hover_element** | Move the mouse over an element (hover). | **selector**. |
+| **double_click_element** | Double-click an element by selector. | **selector**. |
+| **right_click_element** | Right-click an element (opens context menu). | **selector**. |
+| **drag_and_drop** | Drag from source element to target element by selectors. | **source_selector**, **target_selector**. |
+| **drag_from_to** | Drag from (x1,y1) to (x2,y2) in viewport coordinates (e.g. for canvas). | **x1**, **y1**, **x2**, **y2**. |
+| **get_page_source** | Get the full HTML source of the current page. | — |
+| **get_outer_html** | Get the outer HTML of an element by selector. | **selector**. |
+| **send_keys** | Send keyboard input; optional selector to focus first. Special keys: {Enter}, {Tab}, {Escape}. | **keys** (string). Optional **selector**. |
+| **key_press** | Press a single key (keyDown + keyUp). | **key** (e.g. Enter, Tab, Escape). |
+| **key_down** | Send keyDown (e.g. for modifiers). | **key**. |
+| **key_up** | Send keyUp. | **key**. |
+| **wait** | Sleep for a number of seconds. | **seconds** (number). |
+| **wait_for_selector** | Wait until an element matching the selector appears. | **selector**. Optional **timeout_milliseconds** (default 5000). |
+| **wait_for_navigation** | Wait until document.readyState is complete. | Optional **timeout_milliseconds** (default 10000). |
+| **get_cookies** | Get browser cookies. | Optional **url** to filter. |
+| **set_cookie** | Set a cookie. | **name**, **value**. Optional **url**, **domain**, **path**. |
+| **clear_cookies** | Clear all browser cookies. | — |
+| **get_dialog_message** | Get the current JavaScript dialog message and type if one is open. | — |
+| **accept_dialog** | Accept the current JavaScript dialog. | — |
+| **dismiss_dialog** | Dismiss the current JavaScript dialog. | — |
+| **send_prompt_value** | Send text to a prompt() dialog and accept. | **text**. |
+| **upload_file** | Set file(s) on a file input element. | **selector**, **file_path**. |
+| **list_frames** | List all frames in the current page. | — |
+| **switch_to_frame** | Switch execution context to a frame (by frame_id or index). | **frame_id_or_index**. |
+| **switch_to_main_frame** | Switch execution context back to the main frame. | — |
+| **get_storage** | Get localStorage or sessionStorage. | **storage_type** (localStorage \| sessionStorage). Optional **key**. |
+| **set_storage** | Set a localStorage or sessionStorage item. | **storage_type**, **key**, **value**. |
+| **get_clipboard** | Read clipboard text from the page. | — |
+| **set_clipboard** | Write text to the page clipboard. | **text**. |
+| **get_network_requests** | Get list of network requests (URL, method, status). | — |
+| **set_geolocation** | Set geolocation override for the page. | **latitude**, **longitude**. Optional **accuracy**. |
+| **set_user_agent** | Set the User-Agent override. | **user_agent_string**. |
+| **is_visible** | Check if an element is visible. | **selector**. |
+| **get_element_bounding_box** | Get getBoundingClientRect (x, y, width, height) for an element. | **selector**. |
 
 ## Project structure
 

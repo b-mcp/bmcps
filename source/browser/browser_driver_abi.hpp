@@ -170,6 +170,81 @@ struct ScrollScope {
     std::string selector;  // for Element only
 };
 
+// Result of evaluate_javascript (script return value serialized as JSON string).
+struct EvaluateJavaScriptResult {
+    bool success = false;
+    std::string result_json_string;
+    std::string error_detail;
+};
+
+// Cookie entry for get_cookies.
+struct CookieEntry {
+    std::string name;
+    std::string value;
+    std::string domain;
+    std::string path;
+};
+
+struct GetCookiesResult {
+    bool success = false;
+    std::vector<CookieEntry> cookies;
+    std::string error_detail;
+};
+
+// Frame info for list_frames.
+struct FrameInfo {
+    std::string frame_id;
+    std::string url;
+    std::string parent_frame_id;  // empty for main frame
+};
+
+struct ListFramesResult {
+    bool success = false;
+    std::vector<FrameInfo> frames;
+    std::string error_detail;
+};
+
+// Page source / outer HTML.
+struct GetPageSourceResult {
+    bool success = false;
+    std::string html;
+    std::string error_detail;
+};
+
+// Element bounding box (getBoundingClientRect).
+struct BoundingBoxResult {
+    bool success = false;
+    double x = 0;
+    double y = 0;
+    double width = 0;
+    double height = 0;
+    std::string error_detail;
+};
+
+// Network request entry (for get_network_requests).
+struct NetworkRequestEntry {
+    std::string request_id;
+    std::string url;
+    std::string method;
+    int status_code = 0;
+    std::string status_text;
+};
+
+struct GetNetworkRequestsResult {
+    bool success = false;
+    std::vector<NetworkRequestEntry> requests;
+    std::string error_detail;
+};
+
+// JavaScript dialog (alert/confirm/prompt) state.
+struct GetDialogMessageResult {
+    bool success = false;
+    bool dialog_open = false;
+    std::string message;
+    std::string type;  // "alert" | "confirm" | "prompt"
+    std::string error_detail;
+};
+
 } // namespace browser_driver
 
 #endif // BMCPS_BROWSER_DRIVER_ABI_HPP

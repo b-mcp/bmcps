@@ -55,6 +55,41 @@ set(BMCPS_SOURCES
     source/tool_handlers/tool_click_at_coordinates.cpp
     source/tool_handlers/tool_scroll.cpp
     source/tool_handlers/tool_resize_browser.cpp
+    source/tool_handlers/tool_evaluate_javascript.cpp
+    source/tool_handlers/tool_hover_element.cpp
+    source/tool_handlers/tool_double_click_element.cpp
+    source/tool_handlers/tool_right_click_element.cpp
+    source/tool_handlers/tool_drag_and_drop.cpp
+    source/tool_handlers/tool_drag_from_to.cpp
+    source/tool_handlers/tool_get_page_source.cpp
+    source/tool_handlers/tool_get_outer_html.cpp
+    source/tool_handlers/tool_send_keys.cpp
+    source/tool_handlers/tool_key_press.cpp
+    source/tool_handlers/tool_key_down.cpp
+    source/tool_handlers/tool_key_up.cpp
+    source/tool_handlers/tool_wait.cpp
+    source/tool_handlers/tool_wait_for_selector.cpp
+    source/tool_handlers/tool_wait_for_navigation.cpp
+    source/tool_handlers/tool_get_cookies.cpp
+    source/tool_handlers/tool_set_cookie.cpp
+    source/tool_handlers/tool_clear_cookies.cpp
+    source/tool_handlers/tool_get_dialog_message.cpp
+    source/tool_handlers/tool_accept_dialog.cpp
+    source/tool_handlers/tool_dismiss_dialog.cpp
+    source/tool_handlers/tool_send_prompt_value.cpp
+    source/tool_handlers/tool_upload_file.cpp
+    source/tool_handlers/tool_list_frames.cpp
+    source/tool_handlers/tool_switch_to_frame.cpp
+    source/tool_handlers/tool_switch_to_main_frame.cpp
+    source/tool_handlers/tool_get_storage.cpp
+    source/tool_handlers/tool_set_storage.cpp
+    source/tool_handlers/tool_get_clipboard.cpp
+    source/tool_handlers/tool_set_clipboard.cpp
+    source/tool_handlers/tool_get_network_requests.cpp
+    source/tool_handlers/tool_set_geolocation.cpp
+    source/tool_handlers/tool_set_user_agent.cpp
+    source/tool_handlers/tool_is_visible.cpp
+    source/tool_handlers/tool_get_element_bounding_box.cpp
 )
 
 add_executable(bmcps ${BMCPS_SOURCES})

@@ -48,7 +48,7 @@ Binary: `build/bmcps`.
 
 ## What it can do (tool sample)
 
-Open and close the browser, manage tabs, navigate to a URL, capture a screenshot, list and fill form fields, click buttons and links, read console messages, resize the window, scroll the page or a scrollable element, and more.
+Open and close the browser, manage tabs, navigate to a URL, capture a screenshot, list and fill form fields, click buttons and links, read console messages, resize the window, scroll the page or a scrollable element, hover and double-click or right-click elements, drag and drop (by selector or coordinates for canvas), run JavaScript in the page, send keys and wait for elements or navigation, manage cookies and dialogs, upload files, work with frames and storage, read or set clipboard, inspect network requests, set geolocation or user agent, and check element visibility or bounding box.
 
 For the full list of tools and parameters, see [Developer documentation](documentation/developer.md).
 

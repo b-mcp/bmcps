@@ -115,6 +115,89 @@ static int websocket_callback(struct lws *websocket_instance, enum lws_callback_
                                     }
                                 }
                             }
+                        } else if (method == "Page.javascriptDialogOpening") {
+                            if (message.contains("params")) {
+                                const json &params = message["params"];
+                                std::lock_guard<std::mutex> lock(global_state.dialog_mutex);
+                                global_state.last_dialog_message.clear();
+                                global_state.last_dialog_type.clear();
+                                if (params.contains("message") && params["message"].is_string()) {
+                                    global_state.last_dialog_message = params["message"].get<std::string>();
+                                }
+                                if (params.contains("type") && params["type"].is_string()) {
+                                    global_state.last_dialog_type = params["type"].get<std::string>();
+                                }
+                            }
+                        } else if (method == "Runtime.executionContextCreated") {
+                            if (message.contains("params") &&
+                                message["params"].contains("context")) {
+                                const json &ctx = message["params"]["context"];
+                                int context_id = 0;
+                                std::string frame_id;
+                                if (ctx.contains("id") && ctx["id"].is_number()) {
+                                    context_id = ctx["id"].get<int>();
+                                }
+                                if (ctx.contains("auxData") && ctx["auxData"].is_object() &&
+                                    ctx["auxData"].contains("frameId") && ctx["auxData"]["frameId"].is_string()) {
+                                    frame_id = ctx["auxData"]["frameId"].get<std::string>();
+                                }
+                                if (!frame_id.empty() && context_id != 0) {
+                                    std::lock_guard<std::mutex> lock(global_state.frame_mutex);
+                                    global_state.execution_context_id_by_frame_id[frame_id] = context_id;
+                                }
+                            }
+                        } else if (method == "Network.requestWillBeSent") {
+                            if (message.contains("params")) {
+                                const json &params = message["params"];
+                                std::string request_id;
+                                std::string url;
+                                std::string method_str = "GET";
+                                if (params.contains("requestId") && params["requestId"].is_string()) {
+                                    request_id = params["requestId"].get<std::string>();
+                                }
+                                if (params.contains("request")) {
+                                    const json &req = params["request"];
+                                    if (req.contains("url") && req["url"].is_string()) {
+                                        url = req["url"].get<std::string>();
+                                    }
+                                    if (req.contains("method") && req["method"].is_string()) {
+                                        method_str = req["method"].get<std::string>();
+                                    }
+                                }
+                                browser_driver::NetworkRequestEntry entry;
+                                entry.request_id = request_id;
+                                entry.url = url;
+                                entry.method = method_str;
+                                entry.status_code = 0;
+                                std::lock_guard<std::mutex> lock(global_state.network_mutex);
+                                global_state.network_requests.push_back(entry);
+                                while (global_state.network_requests.size() > ConnectionState::kNetworkRequestsMax) {
+                                    global_state.network_requests.erase(global_state.network_requests.begin());
+                                }
+                            }
+                        } else if (method == "Network.responseReceived") {
+                            if (message.contains("params") &&
+                                message["params"].contains("requestId") &&
+                                message["params"].contains("response")) {
+                                std::string request_id = message["params"]["requestId"].get<std::string>();
+                                int status = 0;
+                                std::string status_text;
+                                if (message["params"]["response"].contains("status")) {
+                                    status = message["params"]["response"]["status"].get<int>();
+                                }
+                                if (message["params"]["response"].contains("statusText") &&
+                                    message["params"]["response"]["statusText"].is_string()) {
+                                    status_text = message["params"]["response"]["statusText"].get<std::string>();
+                                }
+                                std::lock_guard<std::mutex> lock(global_state.network_mutex);
+                                for (auto &entry : global_state.network_requests) {
+                                    if (entry.request_id == request_id) {
+                                        entry.status_code = status;
+                                        entry.status_text = status_text;
+                                        break;
+                                    }
+                                }
+                            }
                         } else {
                             std::cerr << "[bmcps] CDP event: " << method << std::endl;
                         }
@@ -168,6 +251,12 @@ void initialize() {
     global_state.next_message_id = 1;
     global_state.current_target_id.clear();
     global_state.current_session_id.clear();
+    global_state.last_dialog_message.clear();
+    global_state.last_dialog_type.clear();
+    global_state.execution_context_id_by_frame_id.clear();
+    global_state.current_execution_context_id = 0;
+    global_state.network_requests.clear();
+    global_state.network_enabled = false;
     {
         std::lock_guard<std::mutex> lock(global_state.pending_mutex);
         global_state.pending_responses.clear();
@@ -974,6 +1063,12 @@ void enable_console_for_session() {
             debug_log::log("enable_console_for_session: Runtime.enable failed: " +
                            enable_response["error"].get<std::string>());
         }
+        json page_enable_response = send_command("Page.enable", json::object(),
+                                                 global_state.current_session_id);
+        if (page_enable_response.contains("error") && page_enable_response["error"].is_string()) {
+            debug_log::log("enable_console_for_session: Page.enable failed: " +
+                           page_enable_response["error"].get<std::string>());
+        }
     }
 }
 
@@ -1503,6 +1598,1413 @@ browser_driver::DriverResult set_window_bounds(int width, int height) {
 
     result.success = true;
     result.message = "Window resized to " + std::to_string(width) + "x" + std::to_string(height) + ".";
+    return result;
+}
+
+// --- evaluate_javascript ---
+
+browser_driver::EvaluateJavaScriptResult evaluate_javascript(const std::string &script,
+                                                            int timeout_milliseconds) {
+    browser_driver::EvaluateJavaScriptResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    json eval_params;
+    eval_params["expression"] = script;
+    eval_params["returnByValue"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, timeout_milliseconds);
+
+    if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        std::string exception_text;
+        const auto &ex = eval_response["result"]["exceptionDetails"];
+        if (ex.contains("text") && ex["text"].is_string()) {
+            exception_text = ex["text"].get<std::string>();
+        }
+        if (ex.contains("exception") && ex["exception"].contains("description") &&
+            ex["exception"]["description"].is_string()) {
+            if (!exception_text.empty()) {
+                exception_text += "; ";
+            }
+            exception_text += ex["exception"]["description"].get<std::string>();
+        }
+        result.error_detail = exception_text.empty() ? "Script threw an exception." : exception_text;
+        return result;
+    }
+
+    if (eval_response.contains("error") && eval_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = eval_response["error"].get<std::string>();
+        return result;
+    }
+
+    if (!eval_response.contains("result")) {
+        result.success = false;
+        result.error_detail = "Runtime.evaluate did not return a result.";
+        return result;
+    }
+
+    const json &res = eval_response["result"];
+    if (res.contains("result")) {
+        result.result_json_string = res["result"].dump();
+    } else {
+        result.result_json_string = "null";
+    }
+    result.success = true;
+    return result;
+}
+
+// --- hover_element (mouse move to element center) ---
+
+browser_driver::DriverResult hover_element(const std::string &selector) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "hover_element failed.";
+        return result;
+    }
+
+    ensure_dom_enabled();
+
+    json get_doc_response = send_command("DOM.getDocument", json::object(),
+                                         global_state.current_session_id);
+    if (!get_doc_response.contains("result") || !get_doc_response["result"].contains("root")) {
+        result.success = false;
+        result.error_detail = "DOM.getDocument failed.";
+        result.message = "hover_element failed.";
+        return result;
+    }
+    int root_node_id = get_doc_response["result"]["root"]["nodeId"].get<int>();
+
+    json query_params;
+    query_params["nodeId"] = root_node_id;
+    query_params["selector"] = selector;
+    json query_response = send_command("DOM.querySelector", query_params,
+                                       global_state.current_session_id);
+    if (!query_response.contains("result") || query_response["result"]["nodeId"].get<int>() == 0) {
+        result.success = false;
+        result.error_detail = "Element not found: " + selector;
+        result.message = "hover_element failed.";
+        return result;
+    }
+
+    int node_id = query_response["result"]["nodeId"].get<int>();
+    json box_params;
+    box_params["nodeId"] = node_id;
+    json box_response = send_command("DOM.getBoxModel", box_params,
+                                     global_state.current_session_id);
+    if (!box_response.contains("result") || !box_response["result"].contains("model") ||
+        !box_response["result"]["model"].contains("content")) {
+        result.success = false;
+        result.error_detail = "No box model for element: " + selector;
+        result.message = "hover_element failed.";
+        return result;
+    }
+
+    const auto &content = box_response["result"]["model"]["content"];
+    int x = static_cast<int>((content[0].get<double>() + content[4].get<double>()) / 2);
+    int y = static_cast<int>((content[1].get<double>() + content[5].get<double>()) / 2);
+
+    json mouse_move;
+    mouse_move["type"] = "mouseMoved";
+    mouse_move["x"] = x;
+    mouse_move["y"] = y;
+    send_command("Input.dispatchMouseEvent", mouse_move, global_state.current_session_id);
+
+    result.success = true;
+    result.message = "Hovered.";
+    return result;
+}
+
+// --- double_click_element ---
+
+static browser_driver::DriverResult click_element_with_options(const std::string &selector,
+                                                               const std::string &button,
+                                                               int click_count) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "click failed.";
+        return result;
+    }
+
+    ensure_dom_enabled();
+
+    json get_doc_response = send_command("DOM.getDocument", json::object(),
+                                         global_state.current_session_id);
+    if (!get_doc_response.contains("result") || !get_doc_response["result"].contains("root")) {
+        result.success = false;
+        result.error_detail = "DOM.getDocument failed.";
+        return result;
+    }
+    int root_node_id = get_doc_response["result"]["root"]["nodeId"].get<int>();
+
+    json query_params;
+    query_params["nodeId"] = root_node_id;
+    query_params["selector"] = selector;
+    json query_response = send_command("DOM.querySelector", query_params,
+                                       global_state.current_session_id);
+    if (!query_response.contains("result") || query_response["result"]["nodeId"].get<int>() == 0) {
+        std::string click_script = "var el=document.querySelector(" + json(selector).dump() + ");"
+            "if(!el)throw new Error('Not found'); el.click();";
+        json eval_params;
+        eval_params["expression"] = click_script;
+        json eval_response = send_command("Runtime.evaluate", eval_params,
+                                          global_state.current_session_id, 5000);
+        if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+            result.success = false;
+            result.error_detail = "Element not found: " + selector;
+            return result;
+        }
+        result.success = true;
+        result.message = "Clicked (fallback).";
+        return result;
+    }
+
+    int node_id = query_response["result"]["nodeId"].get<int>();
+    json box_params;
+    box_params["nodeId"] = node_id;
+    json box_response = send_command("DOM.getBoxModel", box_params,
+                                     global_state.current_session_id);
+    if (!box_response.contains("result") || !box_response["result"].contains("model") ||
+        !box_response["result"]["model"].contains("content")) {
+        std::string click_script = "var el=document.querySelector(" + json(selector).dump() + ");"
+            "if(!el)throw new Error('Not found'); el.click();";
+        json eval_params;
+        eval_params["expression"] = click_script;
+        json eval_response = send_command("Runtime.evaluate", eval_params,
+                                          global_state.current_session_id, 5000);
+        if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+            result.success = false;
+            result.error_detail = "Element not found or no box model: " + selector;
+            return result;
+        }
+        result.success = true;
+        result.message = "Clicked (fallback).";
+        return result;
+    }
+
+    const auto &content = box_response["result"]["model"]["content"];
+    double left = content[0].get<double>();
+    double top = content[1].get<double>();
+    double right = content[4].get<double>();
+    double bottom = content[5].get<double>();
+    int x = static_cast<int>((left + right) / 2);
+    int y = static_cast<int>((top + bottom) / 2);
+
+    json mouse_press;
+    mouse_press["type"] = "mousePressed";
+    mouse_press["x"] = x;
+    mouse_press["y"] = y;
+    mouse_press["button"] = button;
+    mouse_press["clickCount"] = click_count;
+    json mouse_release;
+    mouse_release["type"] = "mouseReleased";
+    mouse_release["x"] = x;
+    mouse_release["y"] = y;
+    mouse_release["button"] = button;
+    mouse_release["clickCount"] = click_count;
+
+    send_command("Input.dispatchMouseEvent", mouse_press, global_state.current_session_id);
+    send_command("Input.dispatchMouseEvent", mouse_release, global_state.current_session_id);
+
+    result.success = true;
+    result.message = "Clicked.";
+    return result;
+}
+
+browser_driver::DriverResult double_click_element(const std::string &selector) {
+    browser_driver::DriverResult r = click_element_with_options(selector, "left", 2);
+    if (r.success) {
+        r.message = "Double-clicked.";
+    }
+    return r;
+}
+
+browser_driver::DriverResult right_click_element(const std::string &selector) {
+    return click_element_with_options(selector, "right", 1);
+}
+
+// --- drag_and_drop_selectors, drag_from_to_coordinates ---
+
+static bool get_element_center(const std::string &selector, int &out_x, int &out_y) {
+    json get_doc = send_command("DOM.getDocument", json::object(),
+                                global_state.current_session_id);
+    if (!get_doc.contains("result") || !get_doc["result"].contains("root")) {
+        return false;
+    }
+    int root_id = get_doc["result"]["root"]["nodeId"].get<int>();
+    json qp;
+    qp["nodeId"] = root_id;
+    qp["selector"] = selector;
+    json qr = send_command("DOM.querySelector", qp, global_state.current_session_id);
+    if (!qr.contains("result") || qr["result"]["nodeId"].get<int>() == 0) {
+        return false;
+    }
+    json bp;
+    bp["nodeId"] = qr["result"]["nodeId"].get<int>();
+    json br = send_command("DOM.getBoxModel", bp, global_state.current_session_id);
+    if (!br.contains("result") || !br["result"].contains("model") ||
+        !br["result"]["model"].contains("content")) {
+        return false;
+    }
+    const auto &content = br["result"]["model"]["content"];
+    out_x = static_cast<int>((content[0].get<double>() + content[4].get<double>()) / 2);
+    out_y = static_cast<int>((content[1].get<double>() + content[5].get<double>()) / 2);
+    return true;
+}
+
+browser_driver::DriverResult drag_and_drop_selectors(const std::string &source_selector,
+                                                      const std::string &target_selector) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "drag_and_drop failed.";
+        return result;
+    }
+
+    ensure_dom_enabled();
+
+    int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+    if (!get_element_center(source_selector, x1, y1)) {
+        result.success = false;
+        result.error_detail = "Source element not found: " + source_selector;
+        result.message = "drag_and_drop failed.";
+        return result;
+    }
+    if (!get_element_center(target_selector, x2, y2)) {
+        result.success = false;
+        result.error_detail = "Target element not found: " + target_selector;
+        result.message = "drag_and_drop failed.";
+        return result;
+    }
+
+    json press;
+    press["type"] = "mousePressed";
+    press["x"] = x1;
+    press["y"] = y1;
+    press["button"] = "left";
+    press["clickCount"] = 1;
+    json move;
+    move["type"] = "mouseMoved";
+    move["x"] = x2;
+    move["y"] = y2;
+    json release;
+    release["type"] = "mouseReleased";
+    release["x"] = x2;
+    release["y"] = y2;
+    release["button"] = "left";
+    release["clickCount"] = 1;
+
+    send_command("Input.dispatchMouseEvent", press, global_state.current_session_id);
+    send_command("Input.dispatchMouseEvent", move, global_state.current_session_id);
+    send_command("Input.dispatchMouseEvent", release, global_state.current_session_id);
+
+    result.success = true;
+    result.message = "Drag and drop done.";
+    return result;
+}
+
+browser_driver::DriverResult drag_from_to_coordinates(int x1, int y1, int x2, int y2) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "drag_from_to failed.";
+        return result;
+    }
+
+    json press;
+    press["type"] = "mousePressed";
+    press["x"] = x1;
+    press["y"] = y1;
+    press["button"] = "left";
+    press["clickCount"] = 1;
+    json move;
+    move["type"] = "mouseMoved";
+    move["x"] = x2;
+    move["y"] = y2;
+    json release;
+    release["type"] = "mouseReleased";
+    release["x"] = x2;
+    release["y"] = y2;
+    release["button"] = "left";
+    release["clickCount"] = 1;
+
+    send_command("Input.dispatchMouseEvent", press, global_state.current_session_id);
+    send_command("Input.dispatchMouseEvent", move, global_state.current_session_id);
+    send_command("Input.dispatchMouseEvent", release, global_state.current_session_id);
+
+    result.success = true;
+    result.message = "Drag from to done.";
+    return result;
+}
+
+// --- get_page_source, get_outer_html ---
+
+browser_driver::GetPageSourceResult get_page_source() {
+    browser_driver::GetPageSourceResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    json eval_params;
+    eval_params["expression"] = "document.documentElement.outerHTML";
+    eval_params["returnByValue"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 5000);
+
+    if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        result.error_detail = "Failed to get page source.";
+        return result;
+    }
+    if (!eval_response.contains("result") || !eval_response["result"].contains("result")) {
+        result.success = false;
+        result.error_detail = "Runtime.evaluate did not return result.";
+        return result;
+    }
+    const json &res = eval_response["result"]["result"];
+    if (res.contains("value") && res["value"].is_string()) {
+        result.html = res["value"].get<std::string>();
+    }
+    result.success = true;
+    return result;
+}
+
+browser_driver::GetPageSourceResult get_outer_html(const std::string &selector) {
+    browser_driver::GetPageSourceResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    std::string escaped_selector = json(selector).dump();
+    std::string script = "var el=document.querySelector(" + escaped_selector + ");"
+        "el ? el.outerHTML : '';";
+    json eval_params;
+    eval_params["expression"] = script;
+    eval_params["returnByValue"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 5000);
+
+    if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        result.error_detail = "Element not found or failed: " + selector;
+        return result;
+    }
+    if (!eval_response.contains("result") || !eval_response["result"].contains("result")) {
+        result.success = false;
+        result.error_detail = "Runtime.evaluate did not return result.";
+        return result;
+    }
+    const json &res = eval_response["result"]["result"];
+    if (res.contains("value") && res["value"].is_string()) {
+        result.html = res["value"].get<std::string>();
+    }
+    result.success = true;
+    return result;
+}
+
+// --- send_keys, key_press, key_down, key_up ---
+
+browser_driver::DriverResult send_keys(const std::string &keys, const std::string &selector) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "send_keys failed.";
+        return result;
+    }
+
+    if (!selector.empty()) {
+        std::string escaped_selector = json(selector).dump();
+        std::string focus_script = "var el=document.querySelector(" + escaped_selector + ");"
+            "if(!el){ throw new Error('Element not found'); } el.focus();";
+        json eval_params;
+        eval_params["expression"] = focus_script;
+        json focus_response = send_command("Runtime.evaluate", eval_params,
+                                           global_state.current_session_id, 5000);
+        if (focus_response.contains("result") && focus_response["result"].contains("exceptionDetails")) {
+            result.success = false;
+            result.error_detail = "Element not found: " + selector;
+            result.message = "send_keys failed.";
+            return result;
+        }
+    }
+
+    std::string literal_text;
+    std::vector<std::string> special_keys;
+    for (size_t i = 0; i < keys.size(); ) {
+        if (keys[i] == '{' && i + 1 < keys.size()) {
+            size_t close = keys.find('}', i + 1);
+            if (close != std::string::npos) {
+                std::string key_name = keys.substr(i + 1, close - i - 1);
+                if (!literal_text.empty()) {
+                    json insert_params;
+                    insert_params["text"] = literal_text;
+                    send_command("Input.insertText", insert_params, global_state.current_session_id);
+                    literal_text.clear();
+                }
+                json key_params;
+                key_params["key"] = key_name;
+                key_params["type"] = "keyDown";
+                send_command("Input.dispatchKeyEvent", key_params, global_state.current_session_id);
+                key_params["type"] = "keyUp";
+                send_command("Input.dispatchKeyEvent", key_params, global_state.current_session_id);
+                i = close + 1;
+                continue;
+            }
+        }
+        literal_text += keys[i];
+        i++;
+    }
+    if (!literal_text.empty()) {
+        json insert_params;
+        insert_params["text"] = literal_text;
+        json insert_response = send_command("Input.insertText", insert_params,
+                                            global_state.current_session_id, 5000);
+        if (insert_response.contains("error") && insert_response["error"].is_string()) {
+            result.success = false;
+            result.error_detail = insert_response["error"].get<std::string>();
+            result.message = "send_keys failed.";
+            return result;
+        }
+    }
+
+    result.success = true;
+    result.message = "Keys sent.";
+    return result;
+}
+
+browser_driver::DriverResult key_press(const std::string &key) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "key_press failed.";
+        return result;
+    }
+
+    json key_down_params;
+    key_down_params["key"] = key;
+    key_down_params["type"] = "keyDown";
+    send_command("Input.dispatchKeyEvent", key_down_params, global_state.current_session_id);
+    json key_up_params;
+    key_up_params["key"] = key;
+    key_up_params["type"] = "keyUp";
+    send_command("Input.dispatchKeyEvent", key_up_params, global_state.current_session_id);
+
+    result.success = true;
+    result.message = "Key pressed.";
+    return result;
+}
+
+browser_driver::DriverResult key_down(const std::string &key) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "key_down failed.";
+        return result;
+    }
+
+    json key_params;
+    key_params["key"] = key;
+    key_params["type"] = "keyDown";
+    send_command("Input.dispatchKeyEvent", key_params, global_state.current_session_id);
+
+    result.success = true;
+    result.message = "Key down.";
+    return result;
+}
+
+browser_driver::DriverResult key_up(const std::string &key) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "key_up failed.";
+        return result;
+    }
+
+    json key_params;
+    key_params["key"] = key;
+    key_params["type"] = "keyUp";
+    send_command("Input.dispatchKeyEvent", key_params, global_state.current_session_id);
+
+    result.success = true;
+    result.message = "Key up.";
+    return result;
+}
+
+// --- wait_seconds, wait_for_selector, wait_for_navigation ---
+
+browser_driver::DriverResult wait_seconds(double seconds) {
+    browser_driver::DriverResult result;
+    if (seconds <= 0 || seconds > 3600) {
+        result.success = false;
+        result.error_detail = "seconds must be in (0, 3600].";
+        result.message = "wait failed.";
+        return result;
+    }
+    int milliseconds = static_cast<int>(seconds * 1000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+    result.success = true;
+    result.message = "Waited " + std::to_string(seconds) + " s.";
+    return result;
+}
+
+browser_driver::DriverResult wait_for_selector(const std::string &selector, int timeout_milliseconds) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "wait_for_selector failed.";
+        return result;
+    }
+
+    std::string escaped_selector = json(selector).dump();
+    std::string script = "document.querySelector(" + escaped_selector + ") ? true : false;";
+    json eval_params;
+    eval_params["expression"] = script;
+    eval_params["returnByValue"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+
+    auto start = std::chrono::steady_clock::now();
+    int elapsed = 0;
+    while (elapsed < timeout_milliseconds) {
+        json eval_response = send_command("Runtime.evaluate", eval_params,
+                                          global_state.current_session_id, 2000);
+        if (eval_response.contains("result") && eval_response["result"].contains("result")) {
+            const json &res = eval_response["result"]["result"];
+            if (res.contains("value") && res["value"].is_boolean() && res["value"].get<bool>()) {
+                result.success = true;
+                result.message = "Selector found.";
+                return result;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        elapsed = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count());
+    }
+
+    result.success = false;
+    result.error_detail = "Timeout waiting for selector: " + selector;
+    result.message = "wait_for_selector failed.";
+    return result;
+}
+
+browser_driver::DriverResult wait_for_navigation(int timeout_milliseconds) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "wait_for_navigation failed.";
+        return result;
+    }
+
+    std::string script = "document.readyState";
+    json eval_params;
+    eval_params["expression"] = script;
+    eval_params["returnByValue"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+
+    auto start = std::chrono::steady_clock::now();
+    int elapsed = 0;
+    std::string last_ready_state;
+    while (elapsed < timeout_milliseconds) {
+        json eval_response = send_command("Runtime.evaluate", eval_params,
+                                          global_state.current_session_id, 2000);
+        if (eval_response.contains("result") && eval_response["result"].contains("result")) {
+            const json &res = eval_response["result"]["result"];
+            if (res.contains("value") && res["value"].is_string()) {
+                std::string ready_state = res["value"].get<std::string>();
+                if (ready_state == "complete") {
+                    result.success = true;
+                    result.message = "Navigation complete.";
+                    return result;
+                }
+                last_ready_state = ready_state;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        elapsed = static_cast<int>(std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start).count());
+    }
+
+    result.success = false;
+    result.error_detail = "Timeout waiting for navigation (last readyState: " + last_ready_state + ").";
+    result.message = "wait_for_navigation failed.";
+    return result;
+}
+
+// --- get_cookies, set_cookie, clear_cookies ---
+
+browser_driver::GetCookiesResult get_cookies(const std::string &url) {
+    browser_driver::GetCookiesResult result;
+
+    if (!global_state.connected) {
+        result.success = false;
+        result.error_detail = "No active browser. Call open_browser first.";
+        return result;
+    }
+
+    json params;
+    if (!url.empty()) {
+        params["urls"] = json::array({url});
+    }
+    json response = send_command("Network.getCookies", params, "", 5000);
+
+    if (response.contains("error") && response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = response["error"].get<std::string>();
+        return result;
+    }
+    if (!response.contains("result") || !response["result"].contains("cookies")) {
+        result.success = false;
+        result.error_detail = "Network.getCookies did not return cookies.";
+        return result;
+    }
+
+    for (const auto &cookie : response["result"]["cookies"]) {
+        browser_driver::CookieEntry entry;
+        if (cookie.contains("name") && cookie["name"].is_string()) {
+            entry.name = cookie["name"].get<std::string>();
+        }
+        if (cookie.contains("value") && cookie["value"].is_string()) {
+            entry.value = cookie["value"].get<std::string>();
+        }
+        if (cookie.contains("domain") && cookie["domain"].is_string()) {
+            entry.domain = cookie["domain"].get<std::string>();
+        }
+        if (cookie.contains("path") && cookie["path"].is_string()) {
+            entry.path = cookie["path"].get<std::string>();
+        }
+        result.cookies.push_back(entry);
+    }
+    result.success = true;
+    return result;
+}
+
+browser_driver::DriverResult set_cookie(const std::string &name, const std::string &value,
+                                         const std::string &url,
+                                         const std::string &domain,
+                                         const std::string &path) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected) {
+        result.success = false;
+        result.error_detail = "No active browser. Call open_browser first.";
+        result.message = "set_cookie failed.";
+        return result;
+    }
+
+    json params;
+    params["name"] = name;
+    params["value"] = value;
+    if (!url.empty()) {
+        params["url"] = url;
+    }
+    if (!domain.empty()) {
+        params["domain"] = domain;
+    }
+    if (!path.empty()) {
+        params["path"] = path;
+    }
+    json response = send_command("Network.setCookie", params, "", 5000);
+
+    if (response.contains("result") && response["result"].is_boolean() && !response["result"].get<bool>()) {
+        result.success = false;
+        result.error_detail = "Network.setCookie returned false.";
+        result.message = "set_cookie failed.";
+        return result;
+    }
+    if (response.contains("error") && response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = response["error"].get<std::string>();
+        result.message = "set_cookie failed.";
+        return result;
+    }
+    result.success = true;
+    result.message = "Cookie set.";
+    return result;
+}
+
+browser_driver::DriverResult clear_cookies() {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected) {
+        result.success = false;
+        result.error_detail = "No active browser. Call open_browser first.";
+        result.message = "clear_cookies failed.";
+        return result;
+    }
+
+    json response = send_command("Network.clearBrowserCookies", json::object(), "", 5000);
+    if (response.contains("error") && response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = response["error"].get<std::string>();
+        result.message = "clear_cookies failed.";
+        return result;
+    }
+    result.success = true;
+    result.message = "Cookies cleared.";
+    return result;
+}
+
+// --- JavaScript dialog: state from Page.javascriptDialogOpening; handle via Page.handleJavaScriptDialog ---
+
+browser_driver::GetDialogMessageResult get_dialog_message() {
+    browser_driver::GetDialogMessageResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session.";
+        return result;
+    }
+
+    std::lock_guard<std::mutex> lock(global_state.dialog_mutex);
+    result.dialog_open = !global_state.last_dialog_message.empty() || !global_state.last_dialog_type.empty();
+    result.message = global_state.last_dialog_message;
+    result.type = global_state.last_dialog_type;
+    result.success = true;
+    return result;
+}
+
+browser_driver::DriverResult accept_dialog() {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "accept_dialog failed.";
+        return result;
+    }
+
+    json params;
+    params["accept"] = true;
+    json response = send_command("Page.handleJavaScriptDialog", params,
+                                 global_state.current_session_id, 5000);
+    if (response.contains("error") && response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = response["error"].get<std::string>();
+        result.message = "accept_dialog failed.";
+        return result;
+    }
+    {
+        std::lock_guard<std::mutex> lock(global_state.dialog_mutex);
+        global_state.last_dialog_message.clear();
+        global_state.last_dialog_type.clear();
+    }
+    result.success = true;
+    result.message = "Dialog accepted.";
+    return result;
+}
+
+browser_driver::DriverResult dismiss_dialog() {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "dismiss_dialog failed.";
+        return result;
+    }
+
+    json params;
+    params["accept"] = false;
+    json response = send_command("Page.handleJavaScriptDialog", params,
+                                 global_state.current_session_id, 5000);
+    if (response.contains("error") && response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = response["error"].get<std::string>();
+        result.message = "dismiss_dialog failed.";
+        return result;
+    }
+    {
+        std::lock_guard<std::mutex> lock(global_state.dialog_mutex);
+        global_state.last_dialog_message.clear();
+        global_state.last_dialog_type.clear();
+    }
+    result.success = true;
+    result.message = "Dialog dismissed.";
+    return result;
+}
+
+browser_driver::DriverResult send_prompt_value(const std::string &text) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "send_prompt_value failed.";
+        return result;
+    }
+
+    json params;
+    params["accept"] = true;
+    params["promptText"] = text;
+    json response = send_command("Page.handleJavaScriptDialog", params,
+                                 global_state.current_session_id, 5000);
+    if (response.contains("error") && response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = response["error"].get<std::string>();
+        result.message = "send_prompt_value failed.";
+        return result;
+    }
+    {
+        std::lock_guard<std::mutex> lock(global_state.dialog_mutex);
+        global_state.last_dialog_message.clear();
+        global_state.last_dialog_type.clear();
+    }
+    result.success = true;
+    result.message = "Prompt value sent.";
+    return result;
+}
+
+// --- upload_file ---
+
+browser_driver::DriverResult upload_file(const std::string &selector, const std::string &file_path) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "upload_file failed.";
+        return result;
+    }
+
+    ensure_dom_enabled();
+
+    json get_doc_response = send_command("DOM.getDocument", json::object(),
+                                         global_state.current_session_id);
+    if (!get_doc_response.contains("result") || !get_doc_response["result"].contains("root")) {
+        result.success = false;
+        result.error_detail = "DOM.getDocument failed.";
+        result.message = "upload_file failed.";
+        return result;
+    }
+    int root_node_id = get_doc_response["result"]["root"]["nodeId"].get<int>();
+
+    json query_params;
+    query_params["nodeId"] = root_node_id;
+    query_params["selector"] = selector;
+    json query_response = send_command("DOM.querySelector", query_params,
+                                       global_state.current_session_id);
+    if (!query_response.contains("result") || query_response["result"]["nodeId"].get<int>() == 0) {
+        result.success = false;
+        result.error_detail = "File input element not found: " + selector;
+        result.message = "upload_file failed.";
+        return result;
+    }
+
+    int node_id = query_response["result"]["nodeId"].get<int>();
+    json params;
+    params["nodeId"] = node_id;
+    params["files"] = json::array({file_path});
+    json set_response = send_command("DOM.setFileInputFiles", params,
+                                     global_state.current_session_id, 5000);
+
+    if (set_response.contains("error") && set_response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = set_response["error"].get<std::string>();
+        result.message = "upload_file failed.";
+        return result;
+    }
+    result.success = true;
+    result.message = "File set.";
+    return result;
+}
+
+// --- list_frames, switch_to_frame, switch_to_main_frame ---
+
+browser_driver::ListFramesResult list_frames() {
+    browser_driver::ListFramesResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    json response = send_command("Page.getFrameTree", json::object(),
+                                 global_state.current_session_id, 5000);
+    if (!response.contains("result") || !response["result"].contains("frameTree")) {
+        result.success = false;
+        result.error_detail = "Page.getFrameTree failed.";
+        return result;
+    }
+
+    std::function<void(const json &, const std::string &)> collect_frames;
+    collect_frames = [&](const json &frame_tree, const std::string &parent_id) {
+        if (!frame_tree.contains("frame")) {
+            return;
+        }
+        const json &frame = frame_tree["frame"];
+        browser_driver::FrameInfo info;
+        if (frame.contains("id") && frame["id"].is_string()) {
+            info.frame_id = frame["id"].get<std::string>();
+        }
+        if (frame.contains("url") && frame["url"].is_string()) {
+            info.url = frame["url"].get<std::string>();
+        }
+        info.parent_frame_id = parent_id;
+        result.frames.push_back(info);
+        if (frame_tree.contains("childFrames") && frame_tree["childFrames"].is_array()) {
+            for (const auto &child : frame_tree["childFrames"]) {
+                collect_frames(child, info.frame_id);
+            }
+        }
+    };
+    collect_frames(response["result"]["frameTree"], "");
+
+    result.success = true;
+    return result;
+}
+
+browser_driver::DriverResult switch_to_frame(const std::string &frame_id_or_index) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "switch_to_frame failed.";
+        return result;
+    }
+
+    browser_driver::ListFramesResult list_result = list_frames();
+    if (!list_result.success || list_result.frames.empty()) {
+        result.success = false;
+        result.error_detail = "Could not list frames.";
+        result.message = "switch_to_frame failed.";
+        return result;
+    }
+
+    if (frame_id_or_index.empty()) {
+        global_state.current_execution_context_id = 0;
+        result.success = true;
+        result.message = "Switched to main frame.";
+        return result;
+    }
+
+    bool is_index = (frame_id_or_index.size() == 1 && frame_id_or_index[0] >= '0' && frame_id_or_index[0] <= '9') ||
+                    (frame_id_or_index.size() > 1 && frame_id_or_index.find_first_not_of("0123456789") == std::string::npos);
+    int index = -1;
+    if (is_index) {
+        try {
+            index = std::stoi(frame_id_or_index);
+        } catch (...) {
+        }
+    }
+
+    if (index >= 0 && index < static_cast<int>(list_result.frames.size())) {
+        std::string frame_id = list_result.frames[index].frame_id;
+        json eval_params;
+        eval_params["expression"] = "undefined";
+        eval_params["contextId"] = 0;
+        for (int attempt = 0; attempt < 50; attempt++) {
+            service_websocket(100);
+            std::lock_guard<std::mutex> lock(global_state.frame_mutex);
+            auto it = global_state.execution_context_id_by_frame_id.find(frame_id);
+            if (it != global_state.execution_context_id_by_frame_id.end()) {
+                global_state.current_execution_context_id = it->second;
+                result.success = true;
+                result.message = "Switched to frame.";
+                return result;
+            }
+        }
+        result.success = false;
+        result.error_detail = "Execution context for frame not found (enable Runtime and wait for executionContextCreated).";
+        result.message = "switch_to_frame failed.";
+        return result;
+    }
+
+    std::lock_guard<std::mutex> lock(global_state.frame_mutex);
+    auto it = global_state.execution_context_id_by_frame_id.find(frame_id_or_index);
+    if (it != global_state.execution_context_id_by_frame_id.end()) {
+        global_state.current_execution_context_id = it->second;
+        result.success = true;
+        result.message = "Switched to frame.";
+        return result;
+    }
+    result.success = false;
+    result.error_detail = "Frame id or index not found: " + frame_id_or_index;
+    result.message = "switch_to_frame failed.";
+    return result;
+}
+
+browser_driver::DriverResult switch_to_main_frame() {
+    browser_driver::DriverResult result;
+    global_state.current_execution_context_id = 0;
+    result.success = true;
+    result.message = "Switched to main frame.";
+    return result;
+}
+
+// --- get_storage, set_storage ---
+
+browser_driver::GetPageSourceResult get_storage(const std::string &storage_type,
+                                                const std::string &key) {
+    browser_driver::GetPageSourceResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    std::string store = (storage_type == "sessionStorage") ? "sessionStorage" : "localStorage";
+    std::string script;
+    if (key.empty()) {
+        script = "JSON.stringify(Object.fromEntries(Object.entries(" + store + ")));";
+    } else {
+        script = "(() => { var s = " + store + "; var v = s.getItem(" + json(key).dump() + "); return v !== null ? v : ''; })();";
+    }
+    json eval_params;
+    eval_params["expression"] = script;
+    eval_params["returnByValue"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 5000);
+
+    if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        result.error_detail = "get_storage failed.";
+        return result;
+    }
+    if (!eval_response.contains("result") || !eval_response["result"].contains("result")) {
+        result.success = false;
+        result.error_detail = "Runtime.evaluate did not return result.";
+        return result;
+    }
+    const json &res = eval_response["result"]["result"];
+    if (res.contains("value") && res["value"].is_string()) {
+        result.html = res["value"].get<std::string>();
+    }
+    result.success = true;
+    return result;
+}
+
+browser_driver::DriverResult set_storage(const std::string &storage_type,
+                                         const std::string &key,
+                                         const std::string &value) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "set_storage failed.";
+        return result;
+    }
+
+    std::string store = (storage_type == "sessionStorage") ? "sessionStorage" : "localStorage";
+    std::string script = store + ".setItem(" + json(key).dump() + "," + json(value).dump() + ");";
+    json eval_params;
+    eval_params["expression"] = script;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 5000);
+
+    if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        result.error_detail = "set_storage failed.";
+        result.message = "set_storage failed.";
+        return result;
+    }
+    result.success = true;
+    result.message = "Storage set.";
+    return result;
+}
+
+// --- get_clipboard, set_clipboard (async Promise via Runtime.awaitPromise) ---
+
+browser_driver::GetPageSourceResult get_clipboard() {
+    browser_driver::GetPageSourceResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    json eval_params;
+    eval_params["expression"] = "navigator.clipboard.readText()";
+    eval_params["awaitPromise"] = true;
+    eval_params["returnByValue"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 5000);
+
+    if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        result.error_detail = "get_clipboard failed (clipboard may require user gesture).";
+        return result;
+    }
+    if (!eval_response.contains("result") || !eval_response["result"].contains("result")) {
+        result.success = false;
+        result.error_detail = "Runtime.evaluate did not return result.";
+        return result;
+    }
+    const json &res = eval_response["result"]["result"];
+    if (res.contains("value") && res["value"].is_string()) {
+        result.html = res["value"].get<std::string>();
+    }
+    result.success = true;
+    return result;
+}
+
+browser_driver::DriverResult set_clipboard(const std::string &text) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "set_clipboard failed.";
+        return result;
+    }
+
+    std::string escaped = json(text).dump();
+    json eval_params;
+    eval_params["expression"] = "navigator.clipboard.writeText(" + escaped + ")";
+    eval_params["awaitPromise"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 5000);
+
+    if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        result.error_detail = "set_clipboard failed (clipboard may require user gesture).";
+        result.message = "set_clipboard failed.";
+        return result;
+    }
+    result.success = true;
+    result.message = "Clipboard set.";
+    return result;
+}
+
+// --- get_network_requests ---
+
+browser_driver::GetNetworkRequestsResult get_network_requests() {
+    browser_driver::GetNetworkRequestsResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    if (!global_state.network_enabled) {
+        send_command("Network.enable", json::object(), global_state.current_session_id, 5000);
+        global_state.network_enabled = true;
+    }
+
+    for (int drain = 0; drain < 5; drain++) {
+        service_websocket(20);
+    }
+
+    std::lock_guard<std::mutex> lock(global_state.network_mutex);
+    result.requests = global_state.network_requests;
+    result.success = true;
+    return result;
+}
+
+// --- set_geolocation, set_user_agent ---
+
+browser_driver::DriverResult set_geolocation(double latitude, double longitude, double accuracy) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "set_geolocation failed.";
+        return result;
+    }
+
+    json params;
+    params["latitude"] = latitude;
+    params["longitude"] = longitude;
+    if (accuracy > 0) {
+        params["accuracy"] = accuracy;
+    }
+    json response = send_command("Emulation.setGeolocationOverride", params,
+                                 global_state.current_session_id, 5000);
+    if (response.contains("error") && response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = response["error"].get<std::string>();
+        result.message = "set_geolocation failed.";
+        return result;
+    }
+    result.success = true;
+    result.message = "Geolocation set.";
+    return result;
+}
+
+browser_driver::DriverResult set_user_agent(const std::string &user_agent_string) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected) {
+        result.success = false;
+        result.error_detail = "No active browser. Call open_browser first.";
+        result.message = "set_user_agent failed.";
+        return result;
+    }
+
+    json params;
+    params["userAgent"] = user_agent_string;
+    json response = send_command("Network.setUserAgentOverride", params, "", 5000);
+    if (response.contains("error") && response["error"].is_string()) {
+        result.success = false;
+        result.error_detail = response["error"].get<std::string>();
+        result.message = "set_user_agent failed.";
+        return result;
+    }
+    result.success = true;
+    result.message = "User agent set.";
+    return result;
+}
+
+// --- is_visible, get_element_bounding_box ---
+
+browser_driver::DriverResult is_visible(const std::string &selector, bool &out_visible) {
+    browser_driver::DriverResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        result.message = "is_visible failed.";
+        return result;
+    }
+
+    std::string escaped_selector = json(selector).dump();
+    std::string script = "(function(){ var el=document.querySelector(" + escaped_selector + ");"
+        "if(!el) return false; var r=el.getBoundingClientRect();"
+        "return r.width>0 && r.height>0 && window.getComputedStyle(el).visibility!='hidden' && window.getComputedStyle(el).display!='none'; })();";
+    json eval_params;
+    eval_params["expression"] = script;
+    eval_params["returnByValue"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 5000);
+
+    if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        result.error_detail = "Element not found or error: " + selector;
+        result.message = "is_visible failed.";
+        return result;
+    }
+    if (!eval_response.contains("result") || !eval_response["result"].contains("result")) {
+        result.success = false;
+        result.error_detail = "Runtime.evaluate did not return result.";
+        result.message = "is_visible failed.";
+        return result;
+    }
+    const json &res = eval_response["result"]["result"];
+    out_visible = (res.contains("value") && res["value"].is_boolean() && res["value"].get<bool>());
+    result.success = true;
+    result.message = out_visible ? "Element is visible." : "Element is not visible.";
+    return result;
+}
+
+browser_driver::BoundingBoxResult get_element_bounding_box(const std::string &selector) {
+    browser_driver::BoundingBoxResult result;
+
+    if (!global_state.connected || global_state.current_session_id.empty()) {
+        result.success = false;
+        result.error_detail = "No active browser session. Call open_browser first.";
+        return result;
+    }
+
+    std::string escaped_selector = json(selector).dump();
+    std::string script = "(function(){ var el=document.querySelector(" + escaped_selector + ");"
+        "if(!el) return null; var r=el.getBoundingClientRect();"
+        "return {x:r.x,y:r.y,width:r.width,height:r.height}; })();";
+    json eval_params;
+    eval_params["expression"] = script;
+    eval_params["returnByValue"] = true;
+    if (global_state.current_execution_context_id != 0) {
+        eval_params["contextId"] = global_state.current_execution_context_id;
+    }
+    json eval_response = send_command("Runtime.evaluate", eval_params,
+                                      global_state.current_session_id, 5000);
+
+    if (eval_response.contains("result") && eval_response["result"].contains("exceptionDetails")) {
+        result.success = false;
+        result.error_detail = "Element not found: " + selector;
+        return result;
+    }
+    if (!eval_response.contains("result") || !eval_response["result"].contains("result")) {
+        result.success = false;
+        result.error_detail = "Runtime.evaluate did not return result.";
+        return result;
+    }
+    const json &res = eval_response["result"]["result"];
+    if (!res.contains("value") || !res["value"].is_object()) {
+        result.success = false;
+        result.error_detail = "No bounding rect.";
+        return result;
+    }
+    const json &val = res["value"];
+    if (val.contains("x") && val["x"].is_number()) {
+        result.x = val["x"].get<double>();
+    }
+    if (val.contains("y") && val["y"].is_number()) {
+        result.y = val["y"].get<double>();
+    }
+    if (val.contains("width") && val["width"].is_number()) {
+        result.width = val["width"].get<double>();
+    }
+    if (val.contains("height") && val["height"].is_number()) {
+        result.height = val["height"].get<double>();
+    }
+    result.success = true;
     return result;
 }
 

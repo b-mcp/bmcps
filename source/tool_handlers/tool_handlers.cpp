@@ -20,6 +20,41 @@ namespace tool_click_element { void register_tool(); }
 namespace tool_click_at_coordinates { void register_tool(); }
 namespace tool_scroll { void register_tool(); }
 namespace tool_resize_browser { void register_tool(); }
+namespace tool_evaluate_javascript { void register_tool(); }
+namespace tool_hover_element { void register_tool(); }
+namespace tool_double_click_element { void register_tool(); }
+namespace tool_right_click_element { void register_tool(); }
+namespace tool_drag_and_drop { void register_tool(); }
+namespace tool_drag_from_to { void register_tool(); }
+namespace tool_get_page_source { void register_tool(); }
+namespace tool_get_outer_html { void register_tool(); }
+namespace tool_send_keys { void register_tool(); }
+namespace tool_key_press { void register_tool(); }
+namespace tool_key_down { void register_tool(); }
+namespace tool_key_up { void register_tool(); }
+namespace tool_wait { void register_tool(); }
+namespace tool_wait_for_selector { void register_tool(); }
+namespace tool_wait_for_navigation { void register_tool(); }
+namespace tool_get_cookies { void register_tool(); }
+namespace tool_set_cookie { void register_tool(); }
+namespace tool_clear_cookies { void register_tool(); }
+namespace tool_get_dialog_message { void register_tool(); }
+namespace tool_accept_dialog { void register_tool(); }
+namespace tool_dismiss_dialog { void register_tool(); }
+namespace tool_send_prompt_value { void register_tool(); }
+namespace tool_upload_file { void register_tool(); }
+namespace tool_list_frames { void register_tool(); }
+namespace tool_switch_to_frame { void register_tool(); }
+namespace tool_switch_to_main_frame { void register_tool(); }
+namespace tool_get_storage { void register_tool(); }
+namespace tool_set_storage { void register_tool(); }
+namespace tool_get_clipboard { void register_tool(); }
+namespace tool_set_clipboard { void register_tool(); }
+namespace tool_get_network_requests { void register_tool(); }
+namespace tool_set_geolocation { void register_tool(); }
+namespace tool_set_user_agent { void register_tool(); }
+namespace tool_is_visible { void register_tool(); }
+namespace tool_get_element_bounding_box { void register_tool(); }
 
 namespace tool_handlers {
 
@@ -43,6 +78,41 @@ void register_all_tools() {
     tool_click_at_coordinates::register_tool();
     tool_scroll::register_tool();
     tool_resize_browser::register_tool();
+    tool_evaluate_javascript::register_tool();
+    tool_hover_element::register_tool();
+    tool_double_click_element::register_tool();
+    tool_right_click_element::register_tool();
+    tool_drag_and_drop::register_tool();
+    tool_drag_from_to::register_tool();
+    tool_get_page_source::register_tool();
+    tool_get_outer_html::register_tool();
+    tool_send_keys::register_tool();
+    tool_key_press::register_tool();
+    tool_key_down::register_tool();
+    tool_key_up::register_tool();
+    tool_wait::register_tool();
+    tool_wait_for_selector::register_tool();
+    tool_wait_for_navigation::register_tool();
+    tool_get_cookies::register_tool();
+    tool_set_cookie::register_tool();
+    tool_clear_cookies::register_tool();
+    tool_get_dialog_message::register_tool();
+    tool_accept_dialog::register_tool();
+    tool_dismiss_dialog::register_tool();
+    tool_send_prompt_value::register_tool();
+    tool_upload_file::register_tool();
+    tool_list_frames::register_tool();
+    tool_switch_to_frame::register_tool();
+    tool_switch_to_main_frame::register_tool();
+    tool_get_storage::register_tool();
+    tool_set_storage::register_tool();
+    tool_get_clipboard::register_tool();
+    tool_set_clipboard::register_tool();
+    tool_get_network_requests::register_tool();
+    tool_set_geolocation::register_tool();
+    tool_set_user_agent::register_tool();
+    tool_is_visible::register_tool();
+    tool_get_element_bounding_box::register_tool();
 }
 
 } // namespace tool_handlers
