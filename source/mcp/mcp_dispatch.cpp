@@ -17,6 +17,14 @@ static const std::string PROTOCOL_VERSION = "2024-11-05";
 // Server info.
 static const std::string SERVER_NAME = "bmcps";
 static const std::string SERVER_VERSION = "0.1.0";
+// Description so that MCP clients (e.g. Cursor) can discover this server is for
+// browser automation and suggest it when the user needs browser-related actions.
+static const std::string SERVER_DESCRIPTION =
+    "Browser MCP server: controls a real browser (Chrome). Use this server when "
+    "you need to open URLs, navigate, fill forms, click elements, capture "
+    "screenshots, manage tabs, read console logs, or perform any browser-based "
+    "automation. Tools include open_browser, navigate, list_tabs, fill_field, "
+    "click_element, capture_screenshot, get_console_messages, and more.";
 
 // Handle the "initialize" request.
 static json handle_initialize(const json &request_id, const json &params) {
@@ -28,6 +36,7 @@ static json handle_initialize(const json &request_id, const json &params) {
     json server_info;
     server_info["name"] = SERVER_NAME;
     server_info["version"] = SERVER_VERSION;
+    server_info["description"] = SERVER_DESCRIPTION;
 
     json result;
     result["protocolVersion"] = PROTOCOL_VERSION;
