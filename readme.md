@@ -19,12 +19,10 @@ Currently **Linux** (Chrome). For other platforms (Windows, macOS), see [Develop
   Example: `sudo apt-get install libwebsockets-dev cmake g++`
 - nlohmann/json is fetched automatically by CMake (FetchContent).
 
-**Build:**
+**Build:** run the build script from the project root:
 
 ```bash
-mkdir build && cd build
-cmake ..
-make -j$(nproc)
+./build.sh
 ```
 
 Binary: `build/bmcps`.
