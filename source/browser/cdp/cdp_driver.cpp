@@ -642,12 +642,9 @@ browser_driver::TabListResult list_tabs() {
             tab.url = target_info["url"].get<std::string>();
         }
         tab.type = type_str;
+        tab.is_current = (tab.target_id == global_state.current_target_id);
         page_tabs.push_back(tab);
     }
-    std::sort(page_tabs.begin(), page_tabs.end(),
-              [](const browser_driver::TabInfo &a, const browser_driver::TabInfo &b) {
-                  return a.target_id < b.target_id;
-              });
     result.tabs = page_tabs;
 
     result.success = true;
@@ -918,6 +915,14 @@ browser_driver::DriverResult new_tab(const std::string &url) {
     global_state.current_target_id = target_id;
     global_state.current_session_id = attach_response["result"]["sessionId"].get<std::string>();
     enable_console_for_session();
+
+    json activate_params;
+    activate_params["targetId"] = target_id;
+    json activate_response = send_command("Target.activateTarget", activate_params, "");
+    if (activate_response.contains("error") && activate_response["error"].is_string()) {
+        debug_log::log("new_tab: Target.activateTarget failed: " + activate_response["error"].get<std::string>());
+    }
+
     result.success = true;
     result.message = "New tab opened and attached.";
     debug_log::log("new_tab: attached sessionId=" + global_state.current_session_id);
@@ -948,7 +953,6 @@ browser_driver::DriverResult switch_tab(int index) {
             page_target_ids.push_back(target_info["targetId"].get<std::string>());
         }
     }
-    std::sort(page_target_ids.begin(), page_target_ids.end());
 
     if (index < 0 || index >= static_cast<int>(page_target_ids.size())) {
         result.success = false;

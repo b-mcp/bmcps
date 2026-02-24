@@ -25,6 +25,7 @@ struct TabInfo {
     std::string title;
     std::string url;
     std::string type; // e.g. "page", "background_page", "service_worker"
+    bool is_current = false; // true if this tab is the one currently attached for commands
 };
 
 // Result of a browser driver operation.

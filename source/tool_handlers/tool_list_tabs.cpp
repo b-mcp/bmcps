@@ -37,6 +37,7 @@ static json handle_list_tabs(const json &arguments) {
         tab_entry["title"] = tab.title;
         tab_entry["url"] = tab.url;
         tab_entry["type"] = tab.type;
+        tab_entry["is_current"] = tab.is_current;
         tabs_array.push_back(tab_entry);
     }
 
@@ -47,6 +48,7 @@ static json handle_list_tabs(const json &arguments) {
         const auto &tab = tab_list_result.tabs[index];
         summary_stream << "  [" << index << "] " << tab.title
                        << " (" << tab.url << ") type=" << tab.type
+                       << (tab.is_current ? " [current]" : "")
                        << " id=" << tab.target_id << "\n";
     }
 
