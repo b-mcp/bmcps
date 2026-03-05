@@ -11,15 +11,9 @@ MCP server that lets Cursor (or any MCP client) control a browser. You can open 
 
 Currently **Linux** (Chrome). For other platforms (Windows, macOS), see [Developer documentation](documentation/developer.md) to contribute or port.
 
-## Build and requirements
+## Build
 
-**Linux (e.g. Ubuntu/Debian):**
-
-- Install: `libwebsockets-dev`, `cmake`, `g++`  
-  Example: `sudo apt-get install libwebsockets-dev cmake g++`
-- nlohmann/json is fetched automatically by CMake (FetchContent).
-
-**Build:** run the build script from the project root:
+**Build:** run the build script from the project root (all of requirement will be install if need):
 
 ```bash
 ./build.sh
@@ -34,7 +28,7 @@ Binary: `build/bmcps`.
 ```json
 {
   "mcpServers": {
-    "bmcps": {
+    "Browser MCP tool": {
       "command": "/absolute/path/to/build/bmcps"
     }
   }

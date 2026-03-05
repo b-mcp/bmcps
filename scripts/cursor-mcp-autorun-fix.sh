@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Cursor MCP allowlist / auto-run fix (Linux).
-# Ha minden MCP hívásnál újra kér engedélyt, a Cursor régi "MCP Tools Protection"
-# beállítása a state.vscdb-ben override-olja a UI-t. Ezt a script Cursor BEZÁRÁSA
-# után futtatod; utána indítsd újra a Cursort.
-# Lásd: https://forum.cursor.com/t/mcp-allowlist-doesnt-work-also-cant-be-edited/135594/14
+# If Cursor keeps asking for permission on every MCP call, the old "MCP Tools Protection"
+# setting in state.vscdb overrides the UI. Run this script after CLOSING Cursor, then
+# restart Cursor.
+# See: https://forum.cursor.com/t/mcp-allowlist-doesnt-work-also-cant-be-edited/135594/14
 
 set -euo pipefail
 
@@ -17,12 +17,12 @@ STAMP=$(date +%Y%m%d-%H%M%S)
 KEY='src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser'
 
 if ! command -v sqlite3 >/dev/null 2>&1; then
-	echo "Hiányzik az sqlite3. Telepítsd (pl. apt install sqlite3)." >&2
+	echo "sqlite3 is missing. Install it (e.g. apt install sqlite3)." >&2
 	exit 1
 fi
 
 if [ ! -d "$ROOT" ]; then
-	echo "Cursor config nem található: $ROOT" >&2
+	echo "Cursor config not found: $ROOT" >&2
 	exit 1
 fi
 
@@ -55,9 +55,9 @@ while IFS= read -r -d '' DB; do
 done < <(find "$ROOT" -type f -name state.vscdb -print0 2>/dev/null)
 
 if [ "$count" -eq 0 ]; then
-	echo "Egyetlen state.vscdb sem található itt: $ROOT" >&2
+	echo "No state.vscdb found under: $ROOT" >&2
 	exit 1
 fi
 
-echo "Kész. Backuppal: $ROOT/**/state.vscdb.bak.$STAMP"
-echo "Indítsd újra a Cursort, és próbáld ki az MCP eszközöket."
+echo "Done. Backup: $ROOT/**/state.vscdb.bak.$STAMP"
+echo "Restart Cursor and try the MCP tools."
